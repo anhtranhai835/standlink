@@ -1,0 +1,10 @@
+{
+  "name": "standlink",
+  "private": true,
+  "description": "Run a team of coding-agent CLIs over ACP. The app lives in web/.",
+  "scripts": {
+    "setup": "npm --prefix web install",
+    "app:dev": "npm --prefix web run app:dev",
+    "app": "npm --prefix web run app"
+  }
+}
