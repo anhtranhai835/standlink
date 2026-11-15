@@ -20,7 +20,12 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 code { font: 600 11px ui-monospace, Consolas, monospace; color: var(--mute); overflow-wrap: anywhere; }
 
 /* columns are separated by the dark gap, like Orca's hairlines */
-.frame { display: grid; grid-template-columns: 272px minmax(0, 1fr); gap: 3px; height: 100dvh; background: var(--line); }
+.frame { display: grid; grid-template-columns: var(--sb, 272px) 5px minmax(0, 1fr); height: 100dvh; background: var(--line); }
+.frame.sb-off { grid-template-columns: minmax(0, 1fr); }
+/* drag handle between sidebar and workspace */
+.sb-resize { cursor: col-resize; background: var(--line); touch-action: none; }
+.sb-resize:hover, .sb-resize:focus-visible { background: var(--gold); outline: none; }
+.sb-toggle { transform: none; font-size: 16px; padding: 7px 12px; }
 
 /* ---------- sidebar ---------- */
 .sidebar {
@@ -121,7 +126,7 @@ code { font: 600 11px ui-monospace, Consolas, monospace; color: var(--mute); ove
 .pane { position: relative; display: grid; grid-template-rows: auto minmax(0, 1.3fr) minmax(0, 1fr) auto; min-height: 300px; min-width: 0; background: var(--bg); }
 .pane.lead { box-shadow: inset 0 0 0 2px var(--gold); }
 
-.pane-head { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 6px 8px; background: var(--panel); }
+.pane-head { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto auto auto; gap: 8px; align-items: center; padding: 6px 8px; background: var(--panel); }
 .pane-head .face { width: 34px; height: 34px; }
 .ph-main { display: grid; min-width: 0; line-height: 1.2; }
 .ph-main b { display: flex; align-items: center; gap: 6px; font-size: 13px; }
@@ -260,11 +265,12 @@ code { font: 600 11px ui-monospace, Consolas, monospace; color: var(--mute); ove
 @keyframes blink { 50% { opacity: .2; } }
 
 @media (max-width: 1100px) {
-  .frame { grid-template-columns: 230px minmax(0, 1fr); }
+  .frame:not(.sb-off) { grid-template-columns: min(var(--sb, 272px), 40vw) 5px minmax(0, 1fr); }
   .panes { --cols: 2 !important; }
 }
 @media (max-width: 760px) {
-  .frame { height: auto; grid-template-columns: 1fr; }
+  .frame, .frame:not(.sb-off) { height: auto; grid-template-columns: 1fr; }
+  .sb-resize { display: none; }
   .workspace { min-height: 100dvh; }
   .panes { --cols: 1 !important; grid-auto-rows: 460px; overflow: visible; }
   .flight { display: none; }
@@ -293,3 +299,12 @@ code { font: 600 11px ui-monospace, Consolas, monospace; color: var(--mute); ove
 .skill-body { font: 500 14px/1.4 ui-monospace, Consolas, monospace; padding: 6px 8px; background: #0f0819; border: 2px solid #3a2560; resize: vertical; color: var(--ink); }
 .check { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--mute); }
 .err { color: #ff8b8b; }
+
+.prov-pick { font: 800 13px "Be Vietnam Pro", sans-serif; color: var(--ink); background: transparent; border: 0; padding: 0 2px; max-width: 150px; }
+.prov-pick:hover { background: var(--panel2); }
+.row-btns { display: flex; gap: 4px; }
+.providers li.editing { display: block; padding: 0; background: transparent; }
+
+.role { margin-left: 6px; padding: 0 5px; font: 800 10px "Be Vietnam Pro", sans-serif; font-style: normal; color: var(--black); background: var(--c, var(--mute)); text-transform: uppercase; letter-spacing: .04em; }
+.ag { grid-template-columns: 30px minmax(0, 1fr) auto auto auto; }
+.member-edit { grid-column: 1 / -1; }

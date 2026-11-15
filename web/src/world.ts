@@ -10,18 +10,22 @@ export const slug = (name: string) =>
   name.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'agent';
 
 /** One agent session in the team. Several members can share a provider (sub-agents). */
-export interface Member { id: string; provider: ProviderId; label: string }
+export interface Member {
+  id: string; provider: ProviderId; label: string;
+  role?: string; // coder, reviewer, tester… told to the agent in the team rules
+  named?: boolean; // label was set by hand: keep it when the provider changes
+}
 export type AgentId = string;
 
 export const MIN_TEAM = 4; // orchestrator + 3 workers: only the offline demo script needs this many
 export const MAX_TEAM = 8;
 
 /** Next member for a provider: "Codex", then "Codex #2", "Codex #3"... */
-export function newMember(team: Member[], provider: Provider): Member {
+export function newMember(team: Member[], provider: Provider, role?: string): Member {
   const same = team.filter(m => m.provider === provider.id).length;
   let n = same + 1, id = same ? `${provider.id}-${n}` : provider.id;
   while (team.some(m => m.id === id)) id = `${provider.id}-${++n}`;
-  return { id, provider: provider.id, label: same ? `${provider.name} #${n}` : provider.name };
+  return { id, provider: provider.id, label: same ? `${provider.name} #${n}` : provider.name, role };
 }
 
 export type AgentState = 'idle' | 'working' | 'blocked' | 'limited';
@@ -36,6 +40,7 @@ export interface Agent {
   resetIn?: string;
   draft?: string; // reply being streamed right now
   config?: ConfigOption[]; // what this agent lets you choose (from ACP session/new)
+  auth?: AuthMethod[]; // set when the agent said it needs a login
   ctx?: number; // % of the context window used (from ACP usage_update)
   act?: { kind: 'special' | 'finisher'; key: number };
 }
@@ -54,6 +59,7 @@ export interface ConfigOption {
   id: string; name: string; category?: string; currentValue?: string;
   options?: ({ value: string; name: string } | { name?: string; options: { value: string; name: string }[] })[];
 }
+export interface AuthMethod { id: string; name: string; description?: string; type?: string; args?: string[] }
 export interface PermOption { optionId: string; name: string; kind: string }
 export interface Flight { from: AgentId; to: AgentId; text: string; kind: 'say' | 'scroll'; key: number }
 
@@ -76,11 +82,13 @@ export type Ev =
   | { t: 'usage'; agent: AgentId; used: number; size: number }
   | { t: 'turn.end'; agent: AgentId; stopReason: string }
   | { t: 'agent.error'; agent: AgentId; text: string }
-  | { t: 'config'; agent: AgentId; options: ConfigOption[] };
+  | { t: 'config'; agent: AgentId; options: ConfigOption[] }
+  | { t: 'auth'; agent: AgentId; text: string; methods: AuthMethod[] };
 export type Action = Ev
   | { t: 'perm.answer'; ok: boolean } | { t: 'land'; key: number }
   | { t: 'start'; mission: string } | { t: 'orch'; orch: AgentId }
-  | { t: 'member.add'; member: Member } | { t: 'member.remove'; id: AgentId } | { t: 'fx.done' } | { t: 'quiet' }
+  | { t: 'member.add'; member: Member } | { t: 'member.remove'; id: AgentId } | { t: 'member.provider'; id: AgentId; provider: Provider }
+  | { t: 'member.edit'; id: AgentId; label: string; role: string } | { t: 'fx.done' } | { t: 'quiet' }
   | { t: 'access'; agent: AgentId; mode: Access } | { t: 'ask'; to: AgentId; text: string };
 
 /** Orca-style access mode per agent: 'ask' = permission requests wait for you, 'full' = auto-approve. */
@@ -113,6 +121,9 @@ export const initialWorld = (team: Member[], orch: AgentId = team[0]?.id ?? ''):
   tasks: {}, log: [], fx: null, flights: [], perm: null, saved: 0, part: 0,
 });
 
+/** A member can be dropped unless it is in the middle of a turn or waiting on a permission answer. */
+export const canRemove = (ag?: Agent) => !!ag && ag.state !== 'working' && ag.state !== 'blocked';
+
 export function reduce(w: World, a: Action): World {
   const log = (item: Omit<LogItem, 'key'>) => [{ ...item, key: k() }, ...w.log].slice(0, 120);
   const patch = (agents: Record<AgentId, Agent>, id: AgentId, p: Partial<Agent>) => ({ ...agents, [id]: { ...agents[id], ...p } });
@@ -135,10 +146,10 @@ export function reduce(w: World, a: Action): World {
     case 'turn.start': {
       const cur = w.agents[a.agent].task ? w.tasks[w.agents[a.agent].task!] : undefined;
       if (a.quiet && (!cur || cur.status === 'done')) {
-        return { ...w, agents: patch(w.agents, a.agent, { state: 'working', label: 'Đọc tin…', draft: '' }) };
+        return { ...w, agents: patch(w.agents, a.agent, { state: 'working', label: 'Đọc tin…', draft: '', auth: undefined }) };
       }
       if (cur && cur.status !== 'done') {
-        return { ...w, agents: patch(w.agents, a.agent, { state: 'working', label: 'Đang nghĩ…', draft: '' }), tasks: { ...w.tasks, [cur.id]: { ...cur, status: 'running' } } };
+        return { ...w, agents: patch(w.agents, a.agent, { state: 'working', label: 'Đang nghĩ…', draft: '', auth: undefined }), tasks: { ...w.tasks, [cur.id]: { ...cur, status: 'running' } } };
       }
       let n = 101 + Object.keys(w.tasks).length;
       while (w.tasks[`T-${n}`]) n++;
@@ -147,7 +158,7 @@ export function reduce(w: World, a: Action): World {
       return {
         ...w, part,
         tasks: { ...w.tasks, [id]: { id, title, total: 1, done: 0, owner: a.agent, status: 'running', hit: 0, request: a.text, steps: [], files: [] } },
-        agents: patch(w.agents, a.agent, { state: 'working', task: id, label: 'Đang nghĩ…', file: '', draft: '' }),
+        agents: patch(w.agents, a.agent, { state: 'working', task: id, label: 'Đang nghĩ…', file: '', draft: '', auth: undefined }),
         fx: { kind: 'title', text: `PART ${part}`, sub: `${id} · ${title}`, key: k() },
       };
     }
@@ -179,15 +190,33 @@ export function reduce(w: World, a: Action): World {
     }
     case 'agent.error':
       return { ...w, agents: patch(w.agents, a.agent, { state: 'idle', draft: '', label: 'Lỗi' }), log: log({ kind: 'sfx', agent: a.agent, sfx: '！', text: a.text }) };
+    case 'auth':
+      return { ...w, agents: patch(w.agents, a.agent, { state: 'idle', draft: '', label: 'Cần đăng nhập', auth: a.methods }), log: log({ kind: 'sfx', agent: a.agent, sfx: '🔑', text: a.text }) };
+    case 'member.provider': {
+      const ag = w.agents[a.id];
+      if (!canRemove(ag)) return w; // never swap the engine mid-turn
+      const others = w.team.filter(m => m.id !== a.id && m.provider === a.provider.id).length;
+      const cur = w.team.find(m => m.id === a.id);
+      const label = cur?.named ? cur.label : others ? `${a.provider.name} #${others + 1}` : a.provider.name;
+      return {
+        ...w,
+        team: w.team.map(m => (m.id === a.id ? { ...m, provider: a.provider.id, label } : m)),
+        agents: patch(w.agents, a.id, { config: undefined, auth: undefined, ctx: undefined, tokens: 0, quota: 100, state: 'idle', label: undefined }),
+      };
+    }
+    case 'member.edit':
+      return { ...w, team: w.team.map(m => (m.id === a.id ? { ...m, label: a.label.trim() || m.label, role: a.role.trim() || undefined, named: !!a.label.trim() || m.named } : m)) };
     case 'config': return w.agents[a.agent] ? { ...w, agents: patch(w.agents, a.agent, { config: a.options }) } : w;
     case 'quiet': return { ...w, fx: null, flights: [] }; // drop effects that piled up while the session ran in the background
     case 'member.add':
       return { ...w, orch: w.orch || a.member.id, team: [...w.team, a.member], agents: { ...w.agents, [a.member.id]: freshAgent(a.member) }, access: { ...w.access, [a.member.id]: 'ask' } };
     case 'member.remove': {
-      if (a.id === w.orch || w.agents[a.id]?.task) return w; // never drop the leader or someone mid-task
+      if (!canRemove(w.agents[a.id])) return w; // never drop someone mid-turn or waiting on you
       const agents = { ...w.agents };
       delete agents[a.id];
-      return { ...w, team: w.team.filter(m => m.id !== a.id), agents };
+      const team = w.team.filter(m => m.id !== a.id);
+      // removing the leader hands the crown to the next member
+      return { ...w, team, agents, orch: a.id === w.orch ? team[0]?.id ?? '' : w.orch };
     }
     case 'start': {
       const fresh = initialWorld(w.team, w.orch);

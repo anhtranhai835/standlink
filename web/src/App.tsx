@@ -1,9 +1,9 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { byId, frameUrl, pickFree } from './characters';
-import { AddAgent, Flights, NewProject, Overlay, Pane, ProviderList, STATE_LABEL, SkillList, cssVars, preload } from './components';
+import { AddAgent, Flights, MemberEdit, NewProject, Overlay, Pane, ProviderList, STATE_LABEL, SkillList, cssVars, preload } from './components';
 import { bridge, updateToEvents, type AcpEventMsg, type SkillInfo } from './bridge';
 import {
-  MIN_TEAM, buildCheckpoint, demoScript, initialWorld, newMember, reduce, slug,
+  MAX_TEAM, buildCheckpoint, canRemove, demoScript, initialWorld, newMember, reduce, slug,
   type Action, type AgentId, type Ev, type Member, type Provider, type World,
 } from './world';
 
@@ -63,6 +63,9 @@ function Player({ run, waiting, fire }: { run?: Run; waiting: boolean; fire: (ev
 const PROVIDERS_KEY = 'standlink.providers.v2';
 const PROJECTS_KEY = 'standlink.projects.v2';
 
+const SB_DEFAULT = 272, SB_MIN = 200, SB_MAX = 520;
+const clampSb = (n: number) => Math.round(Math.min(SB_MAX, Math.max(SB_MIN, n)));
+
 type Status = 'idle' | 'running' | 'waiting' | 'done';
 const STATUS_LABEL: Record<Status, string> = { idle: 'Chờ lệnh', running: 'Đang chạy', waiting: 'Chờ bạn duyệt', done: 'Xong' };
 const TASK_LABEL = { running: 'Đang chạy', paused: 'Tạm dừng', done: 'Xong' } as const;
@@ -79,6 +82,16 @@ export default function App() {
   const [active, setActive] = useState(boot[0].id);
   const [panel, setPanel] = useState<'' | 'tasks' | 'providers' | 'skills'>('');
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<AgentId | null>(null); // sidebar member being renamed
+  const [sbWidth, setSbWidth] = useState(() => store.get('standlink.sidebar.width', SB_DEFAULT));
+  const [sbOpen, setSbOpen] = useState(() => store.get('standlink.sidebar.open', true));
+  useEffect(() => store.set('standlink.sidebar.width', sbWidth), [sbWidth]);
+  useEffect(() => store.set('standlink.sidebar.open', sbOpen), [sbOpen]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') { e.preventDefault(); setSbOpen(o => !o); } };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   const [skills, setSkills] = useState<SkillInfo[] | null>(bridge ? [] : null);
   const [skillsRev, setSkillsRev] = useState(0);
   const [query, setQuery] = useState('');
@@ -163,11 +176,14 @@ export default function App() {
     const ws = latest.current.worlds[sid];
     const sk = latest.current.skills ?? [];
     const skillLine = sk.length ? ` Skill của đội (đọc bằng skill(name) khi cần, đừng đọc hết): ${sk.map(x => `${x.name}${x.description ? ` — ${x.description}` : ''}`).join('; ')}.` : '';
-    const roster = ws.team.map(m => `${m.id} = ${m.label}${m.id === ws.orch ? ' (chỉ huy)' : ''}`).join('; ');
+    const roster = ws.team.map(m => `${m.id} = ${m.label}${m.role ? `, ${m.role}` : ''}${m.id === ws.orch ? ' (chỉ huy)' : ''}`).join('; ');
+    const me = ws.team.find(m => m.id === id);
+    const roleLine = me?.role ? ` Vai trò của bạn: ${me.role}; chỉ làm đúng phần của vai trò đó.` : '';
+    const spawnable = latest.current.providers.map(p => p.id).join(', ');
     const lead = ws.team.find(m => m.id === ws.orch)?.label ?? 'chỉ huy';
     return id === ws.orch
-      ? `[Standlink] Bạn là CHỈ HUY của một đội agent. Đội: ${roster}. Dùng MCP tool "standlink": board() xem đội và task, assign(member, task, brief) giao việc, ask(member, message) hỏi nhanh. Tiết kiệm token: chia việc nhỏ, brief ngắn, không tự làm phần đã giao. Khi worker xong bạn nhận tin "[Standlink] … xong". assign còn nhận skills[] để đính skill và effort (low cho việc vặt, high cho việc khó).${skillLine}\n\n`
-      : `[Standlink] Bạn là "${ws.team.find(m => m.id === id)?.label}" (id ${id}) trong đội do ${lead} chỉ huy. Đội: ${roster}. Có MCP tool "standlink": board(), ask(member, message). Làm đúng việc được giao, kết thúc bằng 1–3 câu tóm tắt.${skillLine}\n\n`;
+      ? `[Standlink] Bạn là CHỈ HUY của một đội agent. Đội: ${roster}. Dùng MCP tool "standlink": board() xem đội và task, assign(member, task, brief) giao việc, ask(member, message) hỏi nhanh. Tiết kiệm token: chia việc nhỏ, brief ngắn, không tự làm phần đã giao. Khi worker xong bạn nhận tin "[Standlink] … xong". assign còn nhận skills[] để đính skill và effort (low cho việc vặt, high cho việc khó). Thiếu người thì spawn(provider, role, name) để thêm (provider: ${spawnable}), đừng thêm khi không cần.${roleLine}${skillLine}\n\n`
+      : `[Standlink] Bạn là "${ws.team.find(m => m.id === id)?.label}" (id ${id}) trong đội do ${lead} chỉ huy. Đội: ${roster}. Có MCP tool "standlink": board(), ask(member, message). Làm đúng việc được giao, kết thúc bằng 1–3 câu tóm tắt.${roleLine}${skillLine}\n\n`;
   };
 
   const promptAgent = (sid: string, id: AgentId, text: string, opts: { quiet?: boolean } = {}) => {
@@ -214,6 +230,7 @@ export default function App() {
     const act = (a: Action) => dispatchAll({ sid, a });
     if (m.type === 'update') updateToEvents(id, m.update).forEach(act);
     else if (m.type === 'config') act({ t: 'config', agent: id, options: m.options });
+    else if (m.type === 'auth') act({ t: 'auth', agent: id, text: `Cần đăng nhập: ${m.message.slice(0, 160)}`, methods: m.methods });
     else if (m.type === 'permission') {
       if (ws.access[id] === 'full') {
         const allow = m.options.find(o => o.kind.startsWith('allow'));
@@ -253,8 +270,24 @@ export default function App() {
     if (c.tool === 'board') {
       return reply(ws.team.map(m => {
         const ag = ws.agents[m.id], t = ag.task ? ws.tasks[ag.task] : undefined;
-        return `${m.id} | ${m.label}${m.id === ws.orch ? ' | chỉ huy' : ''} | ${STATE_LABEL[ag.state]}${t ? ` | ${t.id} ${t.done}/${t.total} ${t.status}: ${t.title}` : ''}`;
-      }).join('\n'));
+        return `${m.id} | ${m.label}${m.role ? ` | ${m.role}` : ''}${m.id === ws.orch ? ' | chỉ huy' : ''} | ${STATE_LABEL[ag.state]}${t ? ` | ${t.id} ${t.done}/${t.total} ${t.status}: ${t.title}` : ''}`;
+      }).join('\n') + (c.memberId === ws.orch ? `\nprovider để spawn: ${latest.current.providers.map(p => p.id).join(', ') || '(chưa có)'}` : ''));
+    }
+    if (c.tool === 'spawn') {
+      if (c.memberId !== ws.orch) return reply('Chỉ chỉ huy được thêm thành viên.', true);
+      if (ws.team.length >= MAX_TEAM) return reply(`Đội đã đủ ${MAX_TEAM} người.`, true);
+      const ps = latest.current.providers;
+      const wantP = String(c.args.provider ?? '').trim().toLowerCase();
+      const p = ps.find(x => x.id.toLowerCase() === wantP || x.name.toLowerCase() === wantP);
+      if (!p) return reply(`Không có provider "${String(c.args.provider ?? '')}". Có: ${ps.map(x => x.id).join(', ') || 'chưa có'}.`, true);
+      const role = String(c.args.role ?? '').trim().slice(0, 40);
+      const m = newMember(ws.team, p, role || undefined);
+      const name = String(c.args.name ?? '').trim().slice(0, 40);
+      if (name) { m.label = name; m.named = true; }
+      dispatchAll({ sid, a: { t: 'member.add', member: m } });
+      setMetas(ms => ms.map(x => (x.id === sid ? { ...x, cast: { ...x.cast, [m.id]: pickFree(Object.values(x.cast)) } } : x)));
+      dispatchAll({ sid, a: { t: 'narrate', text: `${label(c.memberId)} thêm ${m.label}${role ? ` (${role})` : ''} vào đội.` } });
+      return reply(`Đã thêm ${m.id} (${m.label}${role ? `, ${role}` : ''}). Giờ có thể assign cho ${m.id}.`);
     }
     const want = String(c.args.member ?? '').trim().toLowerCase();
     const target = ws.team.find(m => m.id.toLowerCase() === want || m.label.toLowerCase() === want);
@@ -352,7 +385,25 @@ export default function App() {
     const dir = await bridge?.pickFolder();
     if (dir) setMetas(ms => ms.map(x => (x.id === meta.id ? { ...x, path: dir } : x)));
   };
+  /** Swap an agent to another provider: stop its process, forget its model / effort picks, keep its Stand. */
+  const changeProvider = (id: AgentId, providerId: string) => {
+    const p = providers.find(x => x.id === providerId);
+    if (!p) return;
+    bridge?.stop(meta.id, id);
+    primed.current.delete(`${meta.id}/${id}`);
+    setMetas(ms => ms.map(x => (x.id === meta.id ? { ...x, prefs: { ...x.prefs, [id]: {} } } : x)));
+    dispatch({ t: 'member.provider', id, provider: p });
+  };
+  const login = (id: AgentId, methodId: string) => {
+    const method = w.agents[id]?.auth?.find(m => m.id === methodId);
+    const cmd = cmdOf(meta.id, id);
+    if (!bridge || !method?.args || !cmd) return;
+    primed.current.delete(`${meta.id}/${id}`); // a fresh process after login gets the rules again
+    bridge.login({ projectId: meta.id, memberId: id, cmd, cwd: meta.path, args: method.args })
+      .then(line => dispatch({ t: 'narrate', text: `Đã mở terminal: ${line}. Đăng nhập xong thì gửi lại lệnh cho ${w.team.find(m => m.id === id)?.label}.` }));
+  };
   const removeMember = (id: AgentId) => {
+    if (id === w.orch) for (const k of [...primed.current]) if (k.startsWith(`${meta.id}/`)) primed.current.delete(k); // roles change
     bridge?.stop(meta.id, id);
     dispatch({ t: 'member.remove', id });
   };
@@ -376,9 +427,9 @@ export default function App() {
   const shown = metas.filter(m => m.name.toLowerCase().includes(query.trim().toLowerCase()));
 
   return (
-    <div className="frame">
+    <div className={`frame${sbOpen ? '' : ' sb-off'}`} style={cssVars({ '--sb': `${sbWidth}px` })}>
       {/* ---------- sidebar (Orca layout) ---------- */}
-      <aside className="sidebar" aria-label="Project và agent">
+      {sbOpen && <aside className="sidebar" aria-label="Project và agent">
         <div className="sb-top"><span className="brand">STANDLINK</span><span className="menace" aria-hidden="true">ゴゴゴ</span></div>
         <input className="search" type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="🔍 Tìm project" aria-label="Tìm project" />
         <nav className="sb-nav">
@@ -400,7 +451,8 @@ export default function App() {
           <button type="button" className={panel === 'providers' ? 'on' : ''} aria-expanded={panel === 'providers'} onClick={() => setPanel(p => (p === 'providers' ? '' : 'providers'))}>
             ⚙ Providers <small>{providers.length}</small>
           </button>
-          {panel === 'providers' && <ProviderList providers={providers} onAdd={addProvider} onRemove={id => setProviders(ps => ps.filter(p => p.id !== id))} />}
+          {panel === 'providers' && <ProviderList providers={providers} onAdd={addProvider} onEdit={(id, name, cmd) => setProviders(ps => ps.map(p => (p.id === id ? { ...p, name, cmd } : p)))}
+            onRemove={id => setProviders(ps => ps.filter(p => p.id !== id))} />}
           <button type="button" className={panel === 'skills' ? 'on' : ''} aria-expanded={panel === 'skills'} onClick={() => setPanel(p => (p === 'skills' ? '' : 'skills'))}>
             ✦ Skills <small>{skills?.length ?? 0}</small>
           </button>
@@ -435,11 +487,21 @@ export default function App() {
                       return (
                         <li key={m.id} className={`ag s-${ag.state}`} style={cssVars({ '--c': ch.color })}>
                           <img className="face sm" src={frameUrl(ch.id, 'idle', 0)} alt="" />
-                          <div className="ag-main"><b>{m.label}</b><span>{ag.task ? `${ag.task} · ${ag.label ?? ''}` : STATE_LABEL[ag.state]}</span></div>
+                          <div className="ag-main"><b>{m.label}{m.role && <em className="role">{m.role}</em>}</b><span>{ag.task ? `${ag.task} · ${ag.label ?? ''}` : STATE_LABEL[ag.state]}</span></div>
+                          <button type="button" className="x" title={`Đổi tên / vai trò ${m.label}`} aria-label={`Đổi tên ${m.label}`}
+                            onClick={() => setEditing(e => (e === m.id ? null : m.id))}>✎</button>
                           <button type="button" className={`crown${lead ? ' on' : ''}`} aria-pressed={lead} disabled={busy}
                             title={lead ? 'Đang là chỉ huy' : 'Chọn làm chỉ huy'} onClick={() => setOrch(m.id)}>👑</button>
-                          {!lead && !ag.task && w.team.length > MIN_TEAM && (
-                            <button type="button" className="x" title={`Bỏ ${m.label}`} aria-label={`Bỏ ${m.label}`} onClick={() => removeMember(m.id)}>✕</button>
+                          <button type="button" className="x" disabled={!canRemove(ag)} aria-label={`Xoá ${m.label}`}
+                            title={canRemove(ag) ? `Xoá ${m.label}${lead ? ' (người kế tiếp làm chỉ huy)' : ''}` : 'Đang chạy, đợi xong lượt mới xoá được'}
+                            onClick={() => removeMember(m.id)}>✕</button>
+                          {editing === m.id && (
+                            <MemberEdit member={m} onCancel={() => setEditing(null)}
+                              onSave={(label, role) => {
+                                dispatch({ t: 'member.edit', id: m.id, label, role });
+                                primed.current.delete(`${meta.id}/${m.id}`); // new name or role: rules go out again
+                                setEditing(null);
+                              }} />
                           )}
                         </li>
                       );
@@ -455,11 +517,31 @@ export default function App() {
             );
           })}
         </ul>
-      </aside>
+      </aside>}
+      {sbOpen && (
+        <div className="sb-resize" role="separator" aria-orientation="vertical" aria-label="Kéo để đổi độ rộng sidebar"
+          aria-valuemin={SB_MIN} aria-valuemax={SB_MAX} aria-valuenow={sbWidth} tabIndex={0}
+          title="Kéo để đổi độ rộng · bấm đúp để về mặc định · Ctrl+B ẩn/hiện"
+          onDoubleClick={() => setSbWidth(SB_DEFAULT)}
+          onKeyDown={e => {
+            if (e.key === 'ArrowLeft') setSbWidth(w0 => clampSb(w0 - 16));
+            if (e.key === 'ArrowRight') setSbWidth(w0 => clampSb(w0 + 16));
+          }}
+          onPointerDown={e => {
+            const el = e.currentTarget;
+            el.setPointerCapture(e.pointerId);
+            const move = (ev: PointerEvent) => setSbWidth(clampSb(ev.clientX));
+            const up = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); };
+            el.addEventListener('pointermove', move);
+            el.addEventListener('pointerup', up);
+          }} />
+      )}
 
       {/* ---------- workspace: tabs, panes, status bar ---------- */}
       <main className="workspace">
         <div className="tabs" role="tablist">
+          <button type="button" className="tab sb-toggle" aria-pressed={sbOpen} title={`${sbOpen ? 'Ẩn' : 'Hiện'} sidebar (Ctrl+B)`}
+            aria-label={`${sbOpen ? 'Ẩn' : 'Hiện'} sidebar`} onClick={() => setSbOpen(o => !o)}>☰</button>
           {metas.map(p => (
             <button key={p.id} type="button" role="tab" aria-selected={p.id === meta.id} className={`tab${p.id === meta.id ? ' on' : ''}`} onClick={() => switchTo(p.id)}>
               <span className={`dot2 d-${statusOf(p.id)}`} aria-hidden="true" />
@@ -483,6 +565,10 @@ export default function App() {
               perm={w.perm?.agent === m.id ? w.perm.text : null}
               stageRef={el => { stageRefs.current[m.id] = el; }}
               onReroll={() => setCast(meta.id, c => ({ ...c, [m.id]: pickFree(Object.values(c)) }))}
+              onRemove={canRemove(w.agents[m.id]) ? () => removeMember(m.id) : undefined}
+              providers={providers}
+              onProvider={canRemove(w.agents[m.id]) ? pid => changeProvider(m.id, pid) : undefined}
+              onLogin={methodId => login(m.id, methodId)}
               onPerm={answerPerm}
               onAccess={mode => dispatch({ t: 'access', agent: m.id, mode })}
               onSend={text => sendTo(m, text)}

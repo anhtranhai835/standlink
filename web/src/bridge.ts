@@ -1,5 +1,5 @@
 // UI side of the Electron bridge. In a plain browser `bridge` is undefined and the app runs the offline demo.
-import type { AgentId, ConfigOption, Ev, PermOption } from './world';
+import type { AgentId, AuthMethod, ConfigOption, Ev, PermOption } from './world';
 
 export type AgentMsg =
   | { type: 'update'; update: AcpUpdate }
@@ -7,7 +7,8 @@ export type AgentMsg =
   | { type: 'turn-end'; stopReason: string }
   | { type: 'error'; message: string; rateLimit: boolean }
   | { type: 'exit'; code: number | null; stderr: string }
-  | { type: 'config'; options: ConfigOption[] };
+  | { type: 'config'; options: ConfigOption[] }
+  | { type: 'auth'; message: string; methods: AuthMethod[] };
 
 export interface AcpEventMsg { projectId: string; memberId: AgentId; msg: AgentMsg }
 
@@ -15,6 +16,8 @@ export interface StandlinkApi {
   prompt(a: StartArgs & { text: string }): Promise<null>;
   /** Start an agent without prompting it (costs no tokens) to learn its model / effort options. */
   start(a: StartArgs): Promise<void>;
+  /** Opens a terminal running the agent's login command; returns the command line shown there. */
+  login(a: { projectId: string; memberId: AgentId; cmd: string; cwd: string; args: string[] }): Promise<string>;
   setConfig(projectId: string, memberId: AgentId, configId: string, value: string): Promise<void>;
   listSkills(cwd?: string): Promise<SkillInfo[]>;
   saveSkill(s: { name: string; description: string; body: string; cwd?: string }): Promise<void>;

@@ -38,6 +38,20 @@ const TOOLS = [
     },
   },
   {
+    name: 'spawn',
+    description: 'Leader only: add a team member running one of the registered providers.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        provider: { type: 'string', description: 'provider id listed by board' },
+        role: { type: 'string', description: 'e.g. coder, reviewer, tester' },
+        name: { type: 'string', description: 'optional display name' },
+      },
+      required: ['provider'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'skill',
     description: 'Load the full instructions of a team skill by name.',
     inputSchema: {

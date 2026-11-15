@@ -1,11 +1,12 @@
 // Electron main process: owns one ACP agent process per (project, member) and streams its events to the UI.
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { randomBytes } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { AcpAgent, AcpError, isRateLimit, type McpServerStdio, type PermissionOutcome } from './acp.ts';
+import { AcpAgent, AcpError, isAuthRequired, isRateLimit, type McpServerStdio, type PermissionOutcome } from './acp.ts';
 import { deleteSkill, listSkills, projectDir, readSkill, saveSkill } from './skills.ts';
 
 const appSkillsDir = () => path.join(app.getPath('userData'), 'skills');
@@ -148,8 +149,25 @@ ipcMain.handle('acp:prompt', (_e, a: PromptArgs) => {
     .then(() => slot.ready)
     .then(() => slot.agent.prompt(a.text))
     .then(stopReason => emit(a.projectId, a.memberId, { type: 'turn-end', stopReason }))
-    .catch(err => emit(a.projectId, a.memberId, { type: 'error', message: errText(err), rateLimit: isRateLimit(err) }));
+    .catch(err => emit(a.projectId, a.memberId, isAuthRequired(err)
+      ? { type: 'auth', message: errText(err), methods: slot.agent.authMethods.filter(m => (m.type ?? 'terminal') === 'terminal' && m.args) }
+      : { type: 'error', message: errText(err), rateLimit: isRateLimit(err) }));
   return null; // results stream back as acp:event
+});
+
+/**
+ * Open a visible terminal running the agent's own login command (e.g. `… --cli auth login --claudeai`).
+ * The user signs in there; Standlink never sees credentials. The agent process is restarted on the next prompt.
+ */
+ipcMain.handle('acp:login', (_e, a: { projectId: string; memberId: string; cmd: string; cwd: string; args: string[] }) => {
+  const key = `${a.projectId}/${a.memberId}`;
+  slots.get(key)?.agent.kill();
+  slots.delete(key);
+  const line = [a.cmd, ...a.args.map(x => (/^[\w./:=-]+$/.test(x) ? x : JSON.stringify(x)))].join(' ');
+  if (process.platform === 'win32') spawn('cmd.exe', ['/c', 'start', 'Standlink login', 'cmd', '/k', line], { cwd: a.cwd || os.homedir(), detached: true, stdio: 'ignore' }).unref();
+  else if (process.platform === 'darwin') spawn('osascript', ['-e', `tell app "Terminal" to do script ${JSON.stringify(line)}`], { detached: true, stdio: 'ignore' }).unref();
+  else spawn('x-terminal-emulator', ['-e', 'sh', '-c', `${line}; exec sh`], { cwd: a.cwd || os.homedir(), detached: true, stdio: 'ignore' }).unref();
+  return line;
 });
 
 ipcMain.handle('acp:cancel', (_e, a: { projectId: string; memberId: string }) => {

@@ -12,6 +12,8 @@ export interface ConfigOption {
   id: string; name: string; category?: string; type?: string; currentValue?: string;
   options?: ({ value: string; name: string; description?: string } | { group?: string; name?: string; options: { value: string; name: string }[] })[];
 }
+/** A way to sign the agent in. type "terminal" = run the agent command with `args` in a terminal. */
+export interface AuthMethod { id: string; name: string; description?: string; type?: string; args?: string[] }
 export interface McpServerStdio { name: string; command: string; args: string[]; env: { name: string; value: string }[] }
 
 export interface AgentHandlers {
@@ -43,6 +45,7 @@ export class AcpAgent {
   sessionId = '';
   agentInfo: unknown = null;
   configOptions: ConfigOption[] = [];
+  authMethods: AuthMethod[] = [];
 
   constructor(handlers: AgentHandlers) {
     this.handlers = handlers;
@@ -63,13 +66,15 @@ export class AcpAgent {
   }
 
   async initialize() {
-    const res = await this.request<{ protocolVersion: number; agentInfo?: unknown; authMethods?: unknown[] }>('initialize', {
+    const res = await this.request<{ protocolVersion: number; agentInfo?: unknown; authMethods?: AuthMethod[] }>('initialize', {
       protocolVersion: PROTOCOL_VERSION,
       // Standlink does not serve files or terminals: the agent uses its own tools in the project folder.
-      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+      // auth.terminal: we can open a terminal for the agent's own login command (the user signs in there, not us)
+      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false, auth: { terminal: true } },
       clientInfo: { name: 'standlink', version: '0.1.0' },
     });
     this.agentInfo = res.agentInfo ?? null;
+    this.authMethods = res.authMethods ?? [];
     return res;
   }
 
@@ -153,6 +158,11 @@ export class AcpAgent {
       }
     }
   }
+}
+
+/** ACP auth_required (-32000) or an agent that says it needs a login. */
+export function isAuthRequired(err: unknown): boolean {
+  return err instanceof AcpError && /auth|log ?in|sign ?in|credential/i.test(`${err.message} ${JSON.stringify(err.data ?? '')}`);
 }
 
 /** Heuristic: does this error mean the provider's usage quota ran out (not a normal failure)? */

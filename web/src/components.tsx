@@ -55,11 +55,14 @@ export const STATE_LABEL: Record<Agent['state'], string> = { idle: 'Chờ lệnh
  * with a JoJo stage on top where the Stand fights its task.
  */
 export function Pane({ member, agent, task, char, isOrch, log, nameOf, access, busy, perm, stageRef,
-  onReroll, onPerm, onAccess, onSend, onConfig }: {
+  onReroll, onRemove, onPerm, onAccess, onSend, onConfig, providers, onProvider, onLogin }: {
   member: Member; agent: Agent; task?: Task; char: Character; isOrch: boolean; log: LogItem[];
   nameOf: (id?: AgentId) => string; access: Access; busy: boolean; perm: string | null; stageRef: Ref<HTMLDivElement>;
   onReroll: () => void; onPerm: (ok: boolean) => void; onAccess: (m: Access) => void; onSend: (text: string) => void;
-  onConfig: (configId: string, value: string) => void;
+  onConfig: (configId: string, value: string) => void; onRemove?: () => void;
+  /** Swap this agent to another provider; undefined while it is busy. */
+  providers: Provider[]; onProvider?: (providerId: string) => void;
+  onLogin: (methodId: string) => void;
 }) {
   // `show` = a one-off move playing right now (talking, taking over, finishing, or an idle flourish).
   const [show, setShow] = useState<Row | null>(null);
@@ -83,11 +86,22 @@ export function Pane({ member, agent, task, char, isOrch, log, nameOf, access, b
       <header className="pane-head">
         <img className="face" src={frameUrl(char.id, 'idle', 0)} alt="" />
         <div className="ph-main">
-          <b>{member.label}{isOrch && <span className="badge">👑 CHỈ HUY</span>}</b>
-          <span>「{char.stand}」 · {char.user}</span>
+          <b>
+            {member.label}{member.role && <em className="role">{member.role}</em>}
+            {isOrch && <span className="badge">👑 CHỈ HUY</span>}
+          </b>
+          <span>{onProvider ? (
+            <select className="prov-pick" value={member.provider} aria-label={`Provider của ${member.label}`}
+              title="Đổi provider cho agent này" onChange={e => onProvider(e.target.value)}>
+              {!providers.some(p => p.id === member.provider) && <option value={member.provider}>(provider đã xoá)</option>}
+              {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          ) : providers.find(p => p.id === member.provider)?.name} · 「{char.stand}」</span>
         </div>
         <em className={`chip-state st-${agent.state}`}>{STATE_LABEL[agent.state]}</em>
         <button type="button" className="icon" title="Đổi Stand" aria-label="Đổi Stand" onClick={onReroll}>🎲</button>
+        <button type="button" className="icon" disabled={!onRemove} onClick={onRemove}
+          title={onRemove ? `Xoá ${member.label} khỏi đội` : 'Đang chạy, đợi xong lượt mới xoá được'} aria-label={`Xoá ${member.label}`}>✕</button>
       </header>
 
       <div className="stage" ref={stageRef}>
@@ -100,6 +114,17 @@ export function Pane({ member, agent, task, char, isOrch, log, nameOf, access, b
         {cry && <span className="cry" aria-hidden="true">{cry}</span>}
         <Target task={task} agent={agent} />
         {agent.state === 'limited' && <div className="stamp">TIME STOP<small>reset sau {agent.resetIn}</small></div>}
+        {agent.auth && !perm && (
+          <div className="perm" role="alertdialog" aria-label="Agent cần đăng nhập">
+            <p className="ask">🔑 {member.label} cần đăng nhập</p>
+            <p className="next">Bấm một cách bên dưới: cửa sổ terminal mở ra để bạn tự đăng nhập. Xong thì gửi lại lệnh.</p>
+            <div className="perm-btns">
+              {agent.auth.length
+                ? agent.auth.map(m => <button key={m.id} type="button" className="yes" title={m.description} onClick={() => onLogin(m.id)}>{m.name}</button>)
+                : <span className="next">Agent không gợi ý cách đăng nhập. Mở CLI của nó và đăng nhập thủ công.</span>}
+            </div>
+          </div>
+        )}
         {perm && (
           <div className="perm" role="alertdialog" aria-label="Agent xin phép">
             <p className="next">Câu tiếp theo của bạn sẽ là: “Cho chạy đi!”</p>
@@ -278,37 +303,45 @@ export function AddAgent({ providers, count, onAdd }: { providers: Provider[]; c
 }
 
 /** User-registered agent CLIs. Nothing is hard-coded: add Kimi, DeepSeek… with the command that speaks ACP. */
-export function ProviderList({ providers, onAdd, onRemove }: {
-  providers: Provider[]; onAdd: (name: string, cmd: string) => void; onRemove: (id: string) => void;
+export function ProviderList({ providers, onAdd, onEdit, onRemove }: {
+  providers: Provider[]; onAdd: (name: string, cmd: string) => void;
+  onEdit: (id: string, name: string, cmd: string) => void; onRemove: (id: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null); // provider id, 'new', or null
   const [name, setName] = useState('');
   const [cmd, setCmd] = useState('');
+  const openForm = (p?: Provider) => { setEditing(p?.id ?? 'new'); setName(p?.name ?? ''); setCmd(p?.cmd ?? ''); };
   const submit = () => {
     if (!name.trim() || !cmd.trim()) return;
-    onAdd(name.trim(), cmd.trim());
-    setName(''); setCmd(''); setOpen(false);
+    if (editing === 'new') onAdd(name.trim(), cmd.trim());
+    else if (editing) onEdit(editing, name.trim(), cmd.trim());
+    setEditing(null);
   };
+  const form = (
+    <form className="stack-form" onSubmit={e => { e.preventDefault(); submit(); }}>
+      <input value={name} onChange={e => setName(e.target.value)} placeholder="Tên (vd: Kimi, DeepSeek)" aria-label="Tên provider" autoFocus />
+      <input value={cmd} onChange={e => setCmd(e.target.value)} placeholder="Lệnh ACP (vd: kimi --acp)" aria-label="Lệnh chạy ACP" />
+      <div className="row">
+        <button type="submit" disabled={!name.trim() || !cmd.trim()}>{editing === 'new' ? 'Thêm' : 'Lưu'}</button>
+        <button type="button" onClick={() => setEditing(null)}>Huỷ</button>
+      </div>
+    </form>
+  );
   return (
     <div className="providers">
       <ul>
-        {providers.map(p => (
+        {providers.map(p => (editing === p.id ? <li key={p.id} className="editing">{form}</li> : (
           <li key={p.id}>
             <div><b>{p.name}</b><code>{p.cmd}</code></div>
-            <button type="button" className="x" title={`Xoá ${p.name}`} aria-label={`Xoá provider ${p.name}`} onClick={() => onRemove(p.id)}>✕</button>
+            <span className="row-btns">
+              <button type="button" className="x" title={`Sửa ${p.name}`} aria-label={`Sửa provider ${p.name}`} onClick={() => openForm(p)}>✎</button>
+              <button type="button" className="x" title={`Xoá ${p.name}`} aria-label={`Xoá provider ${p.name}`} onClick={() => onRemove(p.id)}>✕</button>
+            </span>
           </li>
-        ))}
+        )))}
         {!providers.length && <li className="tree-note">Chưa có provider. Thêm một cái để lập đội.</li>}
       </ul>
-      {open ? (
-        <form className="stack-form" onSubmit={e => { e.preventDefault(); submit(); }}>
-          <input value={name} onChange={e => setName(e.target.value)} placeholder="Tên (vd: Kimi, DeepSeek)" aria-label="Tên provider" autoFocus />
-          <input value={cmd} onChange={e => setCmd(e.target.value)} placeholder="Lệnh ACP (vd: kimi --acp)" aria-label="Lệnh chạy ACP" />
-          <div className="row"><button type="submit" disabled={!name.trim() || !cmd.trim()}>Thêm</button><button type="button" onClick={() => setOpen(false)}>Huỷ</button></div>
-        </form>
-      ) : (
-        <button type="button" className="ghost" onClick={() => setOpen(true)}>+ Provider</button>
-      )}
+      {editing === 'new' ? form : <button type="button" className="ghost" onClick={() => openForm()}>+ Provider</button>}
     </div>
   );
 }
@@ -378,5 +411,23 @@ export function SkillList({ skills, canProject, onSave, onDelete }: {
         <button type="button" className="ghost" onClick={() => setOpen(true)}>+ Skill</button>
       )}
     </div>
+  );
+}
+
+const ROLE_PRESETS = ['Coder', 'Reviewer', 'Tester', 'Planner', 'Researcher', 'Docs', 'Designer', 'DevOps'];
+
+/** Inline rename + role editor for one team member. */
+export function MemberEdit({ member, onSave, onCancel }: {
+  member: Member; onSave: (label: string, role: string) => void; onCancel: () => void;
+}) {
+  const [label, setLabel] = useState(member.label);
+  const [role, setRole] = useState(member.role ?? '');
+  return (
+    <form className="stack-form member-edit" onSubmit={e => { e.preventDefault(); onSave(label, role); }}>
+      <input value={label} onChange={e => setLabel(e.target.value.slice(0, 40))} placeholder="Tên hiển thị" aria-label="Tên agent" autoFocus />
+      <input value={role} onChange={e => setRole(e.target.value.slice(0, 40))} placeholder="Vai trò (vd: Reviewer)" aria-label="Vai trò" list="role-presets" />
+      <datalist id="role-presets">{ROLE_PRESETS.map(r => <option key={r} value={r} />)}</datalist>
+      <div className="row"><button type="submit">Lưu</button><button type="button" onClick={onCancel}>Huỷ</button></div>
+    </form>
   );
 }
