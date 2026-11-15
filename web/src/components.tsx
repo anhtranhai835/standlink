@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type Ref } from 'react';
+import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 import { CHARACTERS, SKILLS, frameUrl, framesOf, type Character, type Row } from './characters';
 import { MAX_TEAM, type Access, type Agent, type ConfigOption, type AgentId, type Flight, type Fx, type LogItem, type Member, type Provider, type Task } from './world';
 
@@ -48,6 +48,13 @@ const CRY: Record<Agent['state'], (c: Character) => string> = {
   limited: () => '',
   idle: () => '',
 };
+// Height of the JoJo stage inside a pane, in % of the pane: draggable, remembered per viewer.
+const STAGE_KEY = 'standlink.stage', STAGE_DEFAULT = 38, STAGE_MIN = 15, STAGE_MAX = 75;
+const DETAIL_KEY = 'standlink.detail';
+const clampStage = (n: number) => Math.round(Math.min(STAGE_MAX, Math.max(STAGE_MIN, n)));
+const readNum = (key: string, fallback: number) => { try { const v = localStorage.getItem(key); return v === null || Number.isNaN(Number(v)) ? fallback : Number(v); } catch { return fallback; } };
+const writeNum = (key: string, n: number) => { try { localStorage.setItem(key, String(n)); } catch { /* not remembered */ } };
+
 export const STATE_LABEL: Record<Agent['state'], string> = { idle: 'Chờ lệnh', working: 'Đang làm', blocked: 'Xin phép', limited: 'Hết quota' };
 
 /**
@@ -81,8 +88,15 @@ export function Pane({ member, agent, task, char, isOrch, log, nameOf, access, b
   const row: Row = show ?? (working ? workRows[round % workRows.length] : 'idle');
   const cry = CRY[agent.state](char);
 
+  const paneRef = useRef<HTMLElement>(null);
+  const [stageH, setStageH] = useState(() => clampStage(readNum(STAGE_KEY, STAGE_DEFAULT)));
+  useEffect(() => writeNum(STAGE_KEY, stageH), [stageH]);
+  // Off by default: people see the agent's answers; tools, team messages and narration only on request.
+  const [detail, setDetail] = useState(() => readNum(DETAIL_KEY, 0) === 1);
+  useEffect(() => writeNum(DETAIL_KEY, detail ? 1 : 0), [detail]);
+
   return (
-    <section className={`pane s-${agent.state}${isOrch ? ' lead' : ''}`} style={cssVars({ '--c': char.color })} aria-label={member.label}>
+    <section ref={paneRef} className={`pane s-${agent.state}${isOrch ? ' lead' : ''}`} style={cssVars({ '--c': char.color, '--stage-h': `${stageH}%` })} aria-label={member.label}>
       <header className="pane-head">
         <img className="face" src={frameUrl(char.id, 'idle', 0)} alt="" />
         <div className="ph-main">
@@ -91,15 +105,11 @@ export function Pane({ member, agent, task, char, isOrch, log, nameOf, access, b
             {isOrch && <span className="badge">👑 CHỈ HUY</span>}
             {agent.branch && <code className="branch" title="Agent này làm trong git worktree riêng, trên nhánh này">⎇ {agent.branch}</code>}
           </b>
-          <span>{onProvider ? (
-            <select className="prov-pick" value={member.provider} aria-label={`Provider của ${member.label}`}
-              title="Đổi provider cho agent này" onChange={e => onProvider(e.target.value)}>
-              {!providers.some(p => p.id === member.provider) && <option value={member.provider}>(provider đã xoá)</option>}
-              {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          ) : providers.find(p => p.id === member.provider)?.name} · 「{char.stand}」</span>
+          <span>「{char.stand}」</span>
         </div>
         <em className={`chip-state st-${agent.state}`}>{STATE_LABEL[agent.state]}</em>
+        <button type="button" className={`detail-btn${detail ? ' on' : ''}`} aria-pressed={detail} onClick={() => setDetail(d => !d)}
+          title={detail ? 'Chỉ hiện câu trả lời của agent' : 'Hiện cả tool, tin nhắn giữa các agent và diễn biến'}>☰ Chi tiết</button>
         <button type="button" className="icon" title="Đổi Stand" aria-label="Đổi Stand" onClick={onReroll}>🎲</button>
         <button type="button" className="icon" disabled={!onRemove} onClick={onRemove}
           title={onRemove ? `Xoá ${member.label} khỏi đội` : 'Đang chạy, đợi xong lượt mới xoá được'} aria-label={`Xoá ${member.label}`}>✕</button>
@@ -138,10 +148,28 @@ export function Pane({ member, agent, task, char, isOrch, log, nameOf, access, b
         )}
       </div>
 
-      <Transcript id={member.id} isOrch={isOrch} log={log} nameOf={nameOf} draft={agent.draft} />
+      <div className="stage-split" role="separator" aria-orientation="horizontal" tabIndex={0}
+        aria-label="Kéo để đổi chiều cao cảnh JoJo" aria-valuemin={STAGE_MIN} aria-valuemax={STAGE_MAX} aria-valuenow={stageH}
+        title="Kéo để đổi chiều cao · bấm đúp để về mặc định" onDoubleClick={() => setStageH(STAGE_DEFAULT)}
+        onKeyDown={e => {
+          if (e.key === 'ArrowUp') setStageH(h => clampStage(h - 4));
+          if (e.key === 'ArrowDown') setStageH(h => clampStage(h + 4));
+        }}
+        onPointerDown={e => {
+          const el = e.currentTarget, box = paneRef.current?.getBoundingClientRect();
+          if (!box) return;
+          el.setPointerCapture(e.pointerId);
+          const move = (ev: PointerEvent) => setStageH(clampStage(((ev.clientY - box.top) / box.height) * 100));
+          const up = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); };
+          el.addEventListener('pointermove', move);
+          el.addEventListener('pointerup', up);
+        }} />
+
+      <Transcript id={member.id} isOrch={isOrch} log={log} nameOf={nameOf} draft={agent.draft} detail={detail}
+        doing={agent.state === 'working' && !agent.draft ? agent.label : undefined} />
 
       <PaneComposer isOrch={isOrch} label={member.label} access={access} busy={busy} tokens={agent.tokens} quota={agent.ctx ?? agent.quota} usesCtx={agent.ctx !== undefined}
-        config={agent.config} onConfig={onConfig}
+        config={agent.config} onConfig={onConfig} provider={member.provider} providers={providers} onProvider={onProvider}
         onAccess={onAccess} onSend={onSend} />
     </section>
   );
@@ -185,31 +213,51 @@ function Target({ task, agent, me }: { task?: Task; agent: Agent; me: Character 
 }
 
 /** Orca-style activity feed for one agent: oldest at top, newest at the bottom, auto-scrolled. */
-function Transcript({ id, isOrch, log, nameOf, draft }: { id: AgentId; isOrch: boolean; log: LogItem[]; nameOf: (id?: AgentId) => string; draft?: string }) {
-  const items = log.filter(i => i.agent === id || i.to === id || (isOrch && i.kind === 'narrate')).slice(0, 40).reverse();
+/** What a non-technical viewer needs: their own messages, the agent's answers, and errors. */
+const isPlain = (i: LogItem, id: AgentId) =>
+  i.kind === 'user' || (i.kind === 'say' && !i.to && i.agent === id) || (i.kind === 'sfx' && (i.sfx === '！' || i.sfx === '🔑'));
+
+function Transcript({ id, isOrch, log, nameOf, draft, detail, doing }: {
+  id: AgentId; isOrch: boolean; log: LogItem[]; nameOf: (id?: AgentId) => string; draft?: string; detail: boolean; doing?: string;
+}) {
+  const mine = log.filter(i => i.agent === id || i.to === id || (isOrch && i.kind === 'narrate'));
+  const items = (detail ? mine : mine.filter(i => isPlain(i, id))).slice(0, 40).reverse();
   const ref = useRef<HTMLOListElement>(null);
   useEffect(() => { ref.current?.scrollTo({ top: ref.current.scrollHeight }); }, [items.length, draft?.length]);
+
+  // consecutive tool steps read as one line: "✎ Read a.ts · Edit a.ts · Bash (+3)"
+  const rows: (LogItem | LogItem[])[] = [];
+  for (const i of items) {
+    const last = rows[rows.length - 1];
+    if (i.kind === 'step' && Array.isArray(last)) last.push(i);
+    else rows.push(i.kind === 'step' ? [i] : i);
+  }
 
   return (
     <ol className="feed" ref={ref} aria-live="polite">
       {items.length === 0 && <li className="f-note">{isOrch ? 'Ra lệnh ở ô bên dưới để bắt đầu.' : 'Chờ chỉ huy giao việc…'}</li>}
-      {items.map(i => {
+      {rows.map(i => {
+        if (Array.isArray(i)) {
+          const shown = i.slice(-4), more = i.length - shown.length;
+          return <li key={i[0].key} className="f-step" title={i.map(x => x.text).join('\n')}>✎ {more ? `(+${more}) ` : ''}{shown.map(x => x.text).join(' · ')}</li>;
+        }
         if (i.kind === 'user') return <li key={i.key} className="f-user"><span>{i.text}</span></li>;
         if (i.kind === 'narrate') return <li key={i.key} className="f-narr">{i.text}</li>;
         if (i.kind === 'say') {
           const mine = i.agent === id;
-          if (!i.to) return <li key={i.key} className="f-text">{i.text}</li>;
+          if (!i.to) return <li key={i.key} className="f-text"><Md text={i.text} /></li>;
           return (
             <li key={i.key} className="f-card">
               <p className="f-card-head">{mine ? `↗ Gửi ${nameOf(i.to)}` : `↙ Tin từ ${nameOf(i.agent)}`}</p>
-              <p>{i.text}</p>
+              <Md text={i.text} />
             </li>
           );
         }
         if (i.kind === 'sfx') return <li key={i.key} className="f-sfx"><b>{i.sfx}</b> {i.text}</li>;
         return <li key={i.key} className="f-step">✎ {i.text}</li>;
       })}
-      {draft && <li className="f-text f-draft">{draft}</li>}
+      {draft && <li className="f-text f-draft"><Md text={draft} /></li>}
+      {!detail && doing && <li className="f-doing" aria-live="off">⏳ {doing}</li>}
     </ol>
   );
 }
@@ -222,9 +270,10 @@ const PICKERS: { category: string; icon: string; label: string }[] = [
 ];
 const flatOptions = (o: ConfigOption) => (o.options ?? []).flatMap(x => ('options' in x ? x.options : [x]));
 
-function PaneComposer({ isOrch, label, access, busy, tokens, quota, usesCtx, config, onAccess, onSend, onConfig }: {
+function PaneComposer({ isOrch, label, access, busy, tokens, quota, usesCtx, config, provider, providers, onProvider, onAccess, onSend, onConfig }: {
   isOrch: boolean; label: string; access: Access; busy: boolean; tokens: number; quota: number; usesCtx: boolean;
   config?: ConfigOption[]; onConfig: (configId: string, value: string) => void;
+  provider: string; providers: Provider[]; onProvider?: (providerId: string) => void;
   onAccess: (m: Access) => void; onSend: (text: string) => void;
 }) {
   const [text, setText] = useState('');
@@ -245,6 +294,11 @@ function PaneComposer({ isOrch, label, access, busy, tokens, quota, usesCtx, con
         <select className={`access a-${access}`} value={access} onChange={e => onAccess(e.target.value as Access)} aria-label="Quyền của agent">
           <option value="ask">✋ Hỏi trước</option>
           <option value="full">⚡ Toàn quyền</option>
+        </select>
+        <select className="cfg" value={provider} disabled={!onProvider} aria-label={`Provider của ${label}`}
+          title={onProvider ? 'Đổi provider (agent khởi động lại)' : 'Đang chạy, đợi xong lượt mới đổi được'} onChange={e => onProvider?.(e.target.value)}>
+          {!providers.some(p => p.id === provider) && <option value={provider}>(provider đã xoá)</option>}
+          {providers.map(p => <option key={p.id} value={p.id}>🔌 {p.name}</option>)}
         </select>
         {PICKERS.map(p => {
           const opt = config?.find(o => o.category === p.category);
@@ -503,4 +557,31 @@ export function MemberEdit({ member, onSave, onCancel }: {
       <div className="row"><button type="submit">Lưu</button><button type="button" onClick={onCancel}>Huỷ</button></div>
     </form>
   );
+}
+
+const INLINE = /(`[^`\n]+`|\*\*[^*\n]+\*\*)/g;
+function inline(t: string): ReactNode[] {
+  return t.split(INLINE).map((p, i) =>
+    p.length > 1 && p.startsWith('`') && p.endsWith('`') ? <code key={i}>{p.slice(1, -1)}</code>
+      : p.length > 4 && p.startsWith('**') && p.endsWith('**') ? <b key={i}>{p.slice(2, -2)}</b> : p);
+}
+function blocks(t: string): ReactNode[] {
+  const out: ReactNode[] = [];
+  let list: ReactNode[] | null = null;
+  t.split('\n').forEach((line, j) => {
+    const li = /^\s*(?:[-*]|\d+\.)\s+(.*)/.exec(line);
+    if (li) { (list ??= []).push(<li key={j}>{inline(li[1])}</li>); return; }
+    if (list) { out.push(<ul key={`l${j}`}>{list}</ul>); list = null; }
+    const h = /^#{1,6}\s+(.*)/.exec(line);
+    if (h) out.push(<p key={j} className="md-h">{inline(h[1])}</p>);
+    else if (line.trim()) out.push(<p key={j}>{inline(line)}</p>);
+  });
+  if (list) out.push(<ul key="l-end">{list}</ul>);
+  return out;
+}
+/** Agent replies are markdown: render the common parts so code and lists read as such. */
+export function Md({ text }: { text: string }) {
+  // odd parts sit between ``` fences (a fence still open while streaming counts as code too)
+  const parts = text.split(/```[\w+-]*\n?/);
+  return <div className="md">{parts.map((p, i) => (i % 2 ? <pre key={i}><code>{p.replace(/\n$/, '')}</code></pre> : <Fragment key={i}>{blocks(p)}</Fragment>))}</div>;
 }
