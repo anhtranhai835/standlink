@@ -1,0 +1,35 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/styles.css"
+        ],
+        "createdAt": "2026-11-15T09:20:15.478Z",
+        "reason": "agent triage: L70 .lane-info border-right is a 3px black panel divider between info column and stage in a manga-panel lane, not a colored accent tab"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/app.css"
+        ],
+        "createdAt": "2026-11-15T09:40:04.957Z",
+        "reason": "agent triage: L31 .rail border-right and L33 .side border-left are 3px black column dividers of the three-pane layout, not colored accent tabs"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/orca.css"
+        ],
+        "createdAt": "2026-11-15T09:47:53.066Z",
+        "reason": "agent triage: L108 .tab.on uses a 3px bottom underline as the active-tab indicator in the tab strip, a standard tab pattern, not a colored side accent on a card"
+      }
+    ]
+  }
+}
