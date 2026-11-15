@@ -3,3 +3,4 @@ web/public/sprites/
 node_modules/
 dist/
 web/electron-dist/
+web/.vite/
