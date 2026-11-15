@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { byId, frameUrl, pickFree } from './characters';
-import { AddAgent, Flights, MemberEdit, NewProject, Overlay, Pane, ProviderList, STATE_LABEL, SkillList, cssVars, preload } from './components';
+import { AddAgent, Flights, MemberEdit, NewProject, Overlay, Pane, ProviderList, STATE_LABEL, SkillList, SpawnDialog, cssVars, preload } from './components';
 import { bridge, updateToEvents, type AcpEventMsg, type SkillInfo } from './bridge';
 import {
   MAX_TEAM, buildCheckpoint, canRemove, demoScript, initialWorld, newMember, reduce, slug,
@@ -35,6 +35,15 @@ function castFor(team: Member[], prev: Record<AgentId, string> = {}): Record<Age
 function makeProject(name: string, path: string): SavedProject {
   return { id: `p-${Date.now().toString(36)}`, name, path, team: [], orch: '', cast: {} };
 }
+/** Like VS Code: a project is a folder, named after it. */
+const folderName = (dir: string) => dir.split(/[\\/]/).filter(Boolean).pop() ?? dir;
+const sameDir = (a: string, b: string) => !!a && a.replace(/[\\/]+$/, '').toLowerCase() === b.replace(/[\\/]+$/, '').toLowerCase();
+const NO_FOLDER = 'Chưa mở thư mục';
+
+/** Agent tabs of one project window: pinned tabs, plus one preview tab (single click) like VS Code. */
+interface View { tabs: AgentId[]; preview?: AgentId; focus?: AgentId }
+/** A leader's spawn() waiting for the user: the member is already added (so its model / effort list loads). */
+interface SpawnReq { sid: string; by: AgentId; id: AgentId }
 
 type Worlds = Record<string, World>;
 type Multi = { sid: string; a: Action } | { t: 'add'; sid: string; world: World } | { t: 'remove'; sid: string };
@@ -62,6 +71,10 @@ function Player({ run, waiting, fire }: { run?: Run; waiting: boolean; fire: (ev
 // v2: no preset providers or teams anymore, so earlier saved data is not reused
 const PROVIDERS_KEY = 'standlink.providers.v2';
 const PROJECTS_KEY = 'standlink.projects.v2';
+const LAST_KEY = 'standlink.lastProject';
+/** Desktop app: each window shows one project (?project=id), like VS Code's one window per folder. */
+const winProject = new URLSearchParams(location.search).get('project');
+const strip = ({ id, name, path, cast, prefs }: ProjectMeta): ProjectMeta => ({ id, name, path, cast, prefs });
 
 const SB_DEFAULT = 272, SB_MIN = 200, SB_MAX = 520;
 const clampSb = (n: number) => Math.round(Math.min(SB_MAX, Math.max(SB_MIN, n)));
@@ -74,12 +87,17 @@ export default function App() {
   const [providers, setProviders] = useState<Provider[]>(() => store.get<Provider[]>(PROVIDERS_KEY, []));
   const [boot] = useState<SavedProject[]>(() => {
     const saved = store.get<SavedProject[]>(PROJECTS_KEY, []);
-    return saved.length ? saved : [makeProject('Project đầu tiên', '')];
+    return saved.length ? saved : [makeProject(NO_FOLDER, '')];
   });
-  const [metas, setMetas] = useState<ProjectMeta[]>(() => boot.map(({ id, name, path, cast }) => ({ id, name, path, cast })));
+  const [metas, setMetas] = useState<ProjectMeta[]>(() => boot.map(strip));
   const [worlds, dispatchAll] = useReducer(multi, boot, b => Object.fromEntries(b.map(s => [s.id, initialWorld(s.team, s.orch)])));
   const [runs, setRuns] = useState<Record<string, Run>>({});
-  const [active, setActive] = useState(boot[0].id);
+  const [active, setActive] = useState(() => {
+    const want = winProject ?? store.get(LAST_KEY, '');
+    return boot.find(b => b.id === want)?.id ?? boot[0].id;
+  });
+  const [view, setView] = useState<Record<string, View>>({});
+  const [spawnReq, setSpawnReq] = useState<SpawnReq | null>(null);
   const [panel, setPanel] = useState<'' | 'tasks' | 'providers' | 'skills'>('');
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<AgentId | null>(null); // sidebar member being renamed
@@ -88,13 +106,17 @@ export default function App() {
   useEffect(() => store.set('standlink.sidebar.width', sbWidth), [sbWidth]);
   useEffect(() => store.set('standlink.sidebar.open', sbOpen), [sbOpen]);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') { e.preventDefault(); setSbOpen(o => !o); } };
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (e.key.toLowerCase() === 'b') { e.preventDefault(); setSbOpen(o => !o); }
+      if (e.key.toLowerCase() === 'o') { e.preventDefault(); openFolderRef.current(); }
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+  const openFolderRef = useRef(() => {});
   const [skills, setSkills] = useState<SkillInfo[] | null>(bridge ? [] : null);
   const [skillsRev, setSkillsRev] = useState(0);
-  const [query, setQuery] = useState('');
   const gridRef = useRef<HTMLDivElement>(null);
   const stageRefs = useRef<Record<AgentId, HTMLDivElement | null>>({});
 
@@ -114,8 +136,32 @@ export default function App() {
     bridge?.configProviders().then(extra => setProviders(ps => [...ps, ...extra.filter(e => !ps.some(p => p.id === e.id))]));
   }, []);
   useEffect(() => {
-    store.set(PROJECTS_KEY, metas.map(m => ({ ...m, team: worlds[m.id]?.team ?? [], orch: worlds[m.id]?.orch ?? '' })));
+    const full = (m: ProjectMeta): SavedProject => ({ ...m, team: worlds[m.id]?.team ?? [], orch: worlds[m.id]?.orch ?? '' });
+    if (!bridge) { store.set(PROJECTS_KEY, metas.map(full)); return; }
+    // Desktop: every window writes only its own project, so windows never overwrite each other's teams.
+    const mine = metas.find(m => m.id === active);
+    if (!mine) return;
+    const saved = store.get<SavedProject[]>(PROJECTS_KEY, []);
+    store.set(PROJECTS_KEY, saved.some(x => x.id === mine.id) ? saved.map(x => (x.id === mine.id ? full(mine) : x)) : [...saved, full(mine)]);
   }, [metas, worlds]);
+  // Other windows added / removed projects or edited providers: pick that up (the storage event fires only in other windows).
+  useEffect(() => {
+    if (!bridge) return;
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === PROVIDERS_KEY) setProviders(store.get<Provider[]>(PROVIDERS_KEY, []));
+      if (e.key !== PROJECTS_KEY) return;
+      const saved = store.get<SavedProject[]>(PROJECTS_KEY, []);
+      if (!saved.length) return;
+      setMetas(ms => saved.map(x => (x.id === active ? ms.find(m => m.id === active) ?? strip(x) : strip(x))));
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [active]);
+  useEffect(() => {
+    bridge?.claimProject(active);
+    store.set(LAST_KEY, active);
+  }, [active]);
+  useEffect(() => { document.title = meta.path ? `${meta.name} — Standlink` : 'Standlink'; }, [meta.name, meta.path]);
   useEffect(() => { Object.values(meta.cast).forEach(id => preload(byId(id))); }, [meta.cast]);
 
   const statusOf = (sid: string): Status => {
@@ -136,20 +182,49 @@ export default function App() {
     setCast(meta.id, c => ({ ...c, [m.id]: pickFree(Object.values(c)) }));
   };
   const switchTo = (sid: string) => {
+    if (bridge) { if (sid !== active) bridge.openProject(sid); return; } // desktop: one window per project
     dispatchAll({ sid, a: { t: 'quiet' } });
     setActive(sid);
   };
   const newProject = (name: string, path: string) => {
     const p = makeProject(name, path);
-    dispatchAll({ t: 'add', sid: p.id, world: initialWorld(p.team, p.orch) });
-    setMetas(ms => [...ms, { id: p.id, name, path, cast: p.cast }]);
-    setActive(p.id);
     setAdding(false);
+    if (bridge) {
+      store.set(PROJECTS_KEY, [...store.get<SavedProject[]>(PROJECTS_KEY, []), p]); // the new window boots from storage
+      setMetas(ms => [...ms, strip(p)]);
+      bridge.openProject(p.id);
+      return;
+    }
+    dispatchAll({ t: 'add', sid: p.id, world: initialWorld(p.team, p.orch) });
+    setMetas(ms => [...ms, strip(p)]);
+    setActive(p.id);
   };
+  /** VS Code's Open Folder: a known folder reopens its project; an empty window adopts the folder; otherwise a new window. */
+  const openPath = (dir: string) => {
+    const known = metas.find(m => sameDir(m.path, dir));
+    if (known) { setAdding(false); return switchTo(known.id); }
+    if (!meta.path && !w.team.length) {
+      setMetas(ms => ms.map(x => (x.id === meta.id ? { ...x, path: dir, name: folderName(dir) } : x)));
+      setAdding(false);
+      return;
+    }
+    newProject(folderName(dir), dir);
+  };
+  const openFolder = async () => {
+    if (!bridge) { setAdding(a => !a); return; } // browser demo: type the path instead
+    const dir = await bridge.pickFolder();
+    if (dir) openPath(dir);
+  };
+  openFolderRef.current = openFolder;
   const removeProject = (sid: string) => {
     const left = metas.filter(m => m.id !== sid);
     setMetas(left);
     dispatchAll({ t: 'remove', sid });
+    if (bridge) {
+      store.set(PROJECTS_KEY, store.get<SavedProject[]>(PROJECTS_KEY, []).filter(x => x.id !== sid));
+      bridge.closeProject(sid);
+      return;
+    }
     if (sid === active) switchTo(left[0].id);
   };
   const addProvider = (name: string, cmd: string) => setProviders(ps => {
@@ -159,8 +234,8 @@ export default function App() {
   });
 
   // ---------- real agents over ACP (Electron). In a browser the demo above is used instead. ----------
-  const latest = useRef({ worlds, metas, providers, skills, skillsByProject: {} as Record<string, SkillInfo[]> });
-  latest.current = { ...latest.current, worlds, metas, providers, skills };
+  const latest = useRef({ worlds, metas, providers, skills, spawnReq, skillsByProject: {} as Record<string, SkillInfo[]> });
+  latest.current = { ...latest.current, worlds, metas, providers, skills, spawnReq };
   const cmdOf = (sid: string, id: AgentId) => {
     const { worlds: ws, providers: ps } = latest.current;
     const m = ws[sid]?.team.find(x => x.id === id);
@@ -182,7 +257,7 @@ export default function App() {
     const spawnable = latest.current.providers.map(p => p.id).join(', ');
     const lead = ws.team.find(m => m.id === ws.orch)?.label ?? 'chỉ huy';
     return id === ws.orch
-      ? `[Standlink] Bạn là CHỈ HUY của một đội agent. Đội: ${roster}. Dùng MCP tool "standlink": board() xem đội và task, assign(member, task, brief) giao việc, ask(member, message) hỏi nhanh. Tiết kiệm token: chia việc nhỏ, brief ngắn, không tự làm phần đã giao. Khi worker xong bạn nhận tin "[Standlink] … xong". assign còn nhận skills[] để đính skill và effort (low cho việc vặt, high cho việc khó). Thiếu người thì spawn(provider, role, name) để thêm (provider: ${spawnable}), đừng thêm khi không cần.${roleLine}${skillLine}\n\n`
+      ? `[Standlink] Bạn là CHỈ HUY của một đội agent. Đội: ${roster}. Dùng MCP tool "standlink": board() xem đội và task, assign(member, task, brief) giao việc, ask(member, message) hỏi nhanh. Tiết kiệm token: chia việc nhỏ, brief ngắn, không tự làm phần đã giao. Khi worker xong bạn nhận tin "[Standlink] … xong". assign còn nhận skills[] để đính skill và effort (low cho việc vặt, high cho việc khó). Đội thiếu người cho việc này thì gọi spawn(provider, role, name) (provider: ${spawnable}): user được hỏi và chọn model/effort, bạn nhận tin khi user trả lời. Đừng thêm khi không cần.${roleLine}${skillLine}\n\n`
       : `[Standlink] Bạn là "${ws.team.find(m => m.id === id)?.label}" (id ${id}) trong đội do ${lead} chỉ huy. Đội: ${roster}. Có MCP tool "standlink": board(), ask(member, message). Làm đúng việc được giao, kết thúc bằng 1–3 câu tóm tắt.${roleLine}${skillLine}\n\n`;
   };
 
@@ -275,6 +350,7 @@ export default function App() {
     }
     if (c.tool === 'spawn') {
       if (c.memberId !== ws.orch) return reply('Chỉ chỉ huy được thêm thành viên.', true);
+      if (latest.current.spawnReq) return reply('Đang chờ user duyệt yêu cầu thêm người trước đó. Đợi tin rồi hãy gọi lại.', true);
       if (ws.team.length >= MAX_TEAM) return reply(`Đội đã đủ ${MAX_TEAM} người.`, true);
       const ps = latest.current.providers;
       const wantP = String(c.args.provider ?? '').trim().toLowerCase();
@@ -286,14 +362,20 @@ export default function App() {
       if (name) { m.label = name; m.named = true; }
       dispatchAll({ sid, a: { t: 'member.add', member: m } });
       setMetas(ms => ms.map(x => (x.id === sid ? { ...x, cast: { ...x.cast, [m.id]: pickFree(Object.values(x.cast)) } } : x)));
-      dispatchAll({ sid, a: { t: 'narrate', text: `${label(c.memberId)} thêm ${m.label}${role ? ` (${role})` : ''} vào đội.` } });
-      return reply(`Đã thêm ${m.id} (${m.label}${role ? `, ${role}` : ''}). Giờ có thể assign cho ${m.id}.`);
+      dispatchAll({ sid, a: { t: 'narrate', text: `${label(c.memberId)} xin thêm ${m.label}${role ? ` (${role})` : ''}. Chờ bạn duyệt.` } });
+      // Ask the user (provider, model, effort) instead of adding silently; the answer reaches the leader as a message.
+      const req = { sid, by: c.memberId, id: m.id };
+      latest.current.spawnReq = req;
+      setSpawnReq(req);
+      return reply(`Đã hỏi user. Bạn sẽ nhận tin "[Standlink] …" khi user duyệt hoặc từ chối. Đừng assign cho ${m.id} trước đó.`);
     }
     const want = String(c.args.member ?? '').trim().toLowerCase();
     const target = ws.team.find(m => m.id.toLowerCase() === want || m.label.toLowerCase() === want);
     if (!target) return reply(`Không có thành viên "${String(c.args.member ?? '')}". Gọi board() để xem id.`, true);
     if (target.id === c.memberId) return reply('Không giao việc hay hỏi chính mình.', true);
     const st = ws.agents[target.id].state;
+    const pend = latest.current.spawnReq;
+    if (pend?.sid === sid && pend.id === target.id) return reply(`${target.label} chưa được user duyệt vào đội.`, true);
 
     if (c.tool === 'assign') {
       const title = String(c.args.task ?? '').trim().slice(0, 120);
@@ -352,6 +434,26 @@ export default function App() {
     bridge?.setConfig(sid, id, configId, value);
   };
 
+  /** The user's answer to the leader's spawn(): keep the member (with the picked name, role, model, effort) or drop it. */
+  const answerSpawn = (ok: boolean, label = '', role = '') => {
+    const r = spawnReq;
+    if (!r) return;
+    latest.current.spawnReq = null;
+    setSpawnReq(null);
+    if (!ok) {
+      bridge?.stop(r.sid, r.id);
+      dispatch({ t: 'member.remove', id: r.id });
+      promptAgent(r.sid, r.by, '[Standlink] User không đồng ý thêm người. Làm tiếp với đội hiện có.', { quiet: true });
+      return;
+    }
+    const name = label.trim() || w.team.find(x => x.id === r.id)?.label || r.id;
+    dispatch({ t: 'member.edit', id: r.id, label: name, role: role.trim() });
+    const cfg = w.agents[r.id]?.config ?? [];
+    const pick = (cat: string) => cfg.find(o => o.category === cat)?.currentValue;
+    const extra = [role.trim(), pick('model') && `model ${pick('model')}`, pick('thought_level') && `effort ${pick('thought_level')}`].filter(Boolean).join(', ');
+    relay(r.sid, r.id, r.by, `[Standlink] User đã duyệt: ${r.id} (${name}${extra ? `, ${extra}` : ''}) vào đội. Giờ có thể assign cho ${r.id}.`);
+  };
+
   // Start every agent of the open project (no prompt, no tokens) so its model / effort pickers appear.
   useEffect(() => {
     if (!bridge || !meta.path) return;
@@ -359,7 +461,7 @@ export default function App() {
       const cmd = providers.find(p => p.id === m.provider)?.cmd;
       if (cmd && !w.agents[m.id]?.config) bridge.start({ projectId: meta.id, memberId: m.id, cmd, cwd: meta.path, prefs: meta.prefs?.[m.id] });
     }
-  }, [meta.id, meta.path, w.team.length, providers.length]);
+  }, [meta.id, meta.path, w.team.map(m => m.provider).join(), providers.length]);
 
   useEffect(() => {
     if (!bridge) return;
@@ -383,7 +485,7 @@ export default function App() {
 
   const pickPath = async () => {
     const dir = await bridge?.pickFolder();
-    if (dir) setMetas(ms => ms.map(x => (x.id === meta.id ? { ...x, path: dir } : x)));
+    if (dir) setMetas(ms => ms.map(x => (x.id === meta.id ? { ...x, path: dir, name: folderName(dir) } : x)));
   };
   /** Swap an agent to another provider: stop its process, forget its model / effort picks, keep its Stand. */
   const changeProvider = (id: AgentId, providerId: string) => {
@@ -408,11 +510,46 @@ export default function App() {
     dispatch({ t: 'member.remove', id });
   };
 
+  /** Where a flying message starts / lands (viewport px): the agent's stage if on screen, else its tab, else its sidebar row. */
   const pos = (id: AgentId) => {
-    const st = stageRefs.current[id], pane = st?.parentElement;
-    return st && pane ? { x: pane.offsetLeft + st.offsetWidth * 0.3, y: pane.offsetTop + st.offsetTop + st.offsetHeight * 0.3 } : { x: 0, y: 0 };
+    const q = `[data-agent="${CSS.escape(id)}"]`;
+    const el = stageRefs.current[id] ?? document.querySelector(`.tab${q}`) ?? document.querySelector(`.ag${q}`);
+    if (!el) return { x: innerWidth / 2, y: 0 };
+    const r = el.getBoundingClientRect();
+    return { x: r.left + r.width * 0.3, y: r.top + r.height * 0.3 };
   };
-  const cols = w.team.length <= 4 ? 2 : w.team.length <= 6 ? 3 : 4;
+
+  // ---------- agent tabs (VS Code): click = preview tab, double click = pinned tab ----------
+  const vw: View = view[meta.id] ?? store.get<View>(`standlink.tabs.${meta.id}`, { tabs: [] });
+  useEffect(() => { if (view[meta.id]) store.set(`standlink.tabs.${meta.id}`, view[meta.id]); }, [view, meta.id]);
+  const live = (id?: AgentId): id is AgentId => !!id && !!w.agents[id];
+  const pinned = vw.tabs.filter(live);
+  let pv = live(vw.preview) && !pinned.includes(vw.preview) ? vw.preview : undefined;
+  if (!pv && !pinned.length) pv = live(w.orch) ? w.orch : w.team[0]?.id; // nothing open: show the leader
+  const tabIds = pv ? [...pinned, pv] : pinned;
+  const shownId = live(vw.focus) && tabIds.includes(vw.focus) ? vw.focus : tabIds[tabIds.length - 1];
+  const shownMember = w.team.find(m => m.id === shownId);
+  const setVw = (f: (v: View) => View) => setView(all => ({ ...all, [meta.id]: f(all[meta.id] ?? vw) }));
+  const previewTab = (id: AgentId) => setVw(v => (v.tabs.includes(id) ? { ...v, focus: id } : { ...v, preview: id, focus: id }));
+  const pinTab = (id: AgentId) => setVw(v => ({ tabs: v.tabs.includes(id) ? v.tabs : [...v.tabs, id], preview: v.preview === id ? undefined : v.preview, focus: id }));
+  const closeTab = (id: AgentId) => setVw(v => ({ tabs: v.tabs.filter(x => x !== id), preview: v.preview === id ? undefined : v.preview, focus: v.focus === id ? undefined : v.focus }));
+  // Ctrl+W closes the shown agent tab, Ctrl+Tab cycles tabs: the editor shortcuts people already know.
+  const keys = useRef({ shownId, tabIds, closeTab, previewTab });
+  keys.current = { shownId, tabIds, closeTab, previewTab };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const k = keys.current;
+      if (!(e.ctrlKey || e.metaKey) || !k.shownId) return;
+      if (e.key.toLowerCase() === 'w') { e.preventDefault(); k.closeTab(k.shownId); }
+      if (e.key === 'Tab' && k.tabIds.length > 1) {
+        e.preventDefault();
+        const i = k.tabIds.indexOf(k.shownId);
+        k.previewTab(k.tabIds[(i + (e.shiftKey ? -1 : 1) + k.tabIds.length) % k.tabIds.length]);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   const tasks = Object.values(w.tasks);
   const used = w.team.reduce((s, m) => s + (w.agents[m.id]?.tokens ?? 0), 0);
   const byProvider = [...new Set(w.team.map(m => m.provider))].map(pid => {
@@ -424,14 +561,12 @@ export default function App() {
       tokens: ms.reduce((s, m) => s + w.agents[m.id].tokens, 0),
     };
   });
-  const shown = metas.filter(m => m.name.toLowerCase().includes(query.trim().toLowerCase()));
 
   return (
     <div className={`frame${sbOpen ? '' : ' sb-off'}`} style={cssVars({ '--sb': `${sbWidth}px` })}>
       {/* ---------- sidebar (Orca layout) ---------- */}
       {sbOpen && <aside className="sidebar" aria-label="Project và agent">
         <div className="sb-top"><span className="brand">STANDLINK</span><span className="menace" aria-hidden="true">ゴゴゴ</span></div>
-        <input className="search" type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="🔍 Tìm project" aria-label="Tìm project" />
         <nav className="sb-nav">
           <button type="button" className={panel === 'tasks' ? 'on' : ''} aria-expanded={panel === 'tasks'} onClick={() => setPanel(p => (p === 'tasks' ? '' : 'tasks'))}>
             ☰ Tasks <small>{tasks.length}</small>
@@ -459,10 +594,10 @@ export default function App() {
           {panel === 'skills' && <SkillList skills={skills} canProject={!!meta.path} onSave={saveSkill} onDelete={deleteSkillFile} />}
         </nav>
 
-        <div className="sb-head"><span>PROJECTS</span><button type="button" className="icon" title="Project mới" aria-label="Project mới" onClick={() => setAdding(a => !a)}>＋</button></div>
-        {adding && <NewProject onCreate={newProject} onCancel={() => setAdding(false)} onPick={bridge ? () => bridge!.pickFolder() : undefined} />}
+        <div className="sb-head"><span>PROJECTS</span><button type="button" className="icon" title="Mở thư mục (Ctrl+O)" aria-label="Mở thư mục" onClick={openFolder}>＋</button></div>
+        {adding && meta.path && <NewProject onOpen={openPath} onCancel={() => setAdding(false)} />}
         <ul className="tree">
-          {shown.map(p => {
+          {metas.map(p => {
             const st = statusOf(p.id), pw = worlds[p.id], open = p.id === meta.id;
             return (
               <li key={p.id} className={open ? 'open' : ''}>
@@ -472,12 +607,12 @@ export default function App() {
                     <span className="proj-name">{p.name}</span>
                     {pw?.part ? <span className="tag">PART {pw.part}</span> : null}
                   </button>
-                  {metas.length > 1 && st !== 'running' && st !== 'waiting' && (
-                    <button type="button" className="x" title="Xoá project" aria-label={`Xoá project ${p.name}`} onClick={() => removeProject(p.id)}>✕</button>
+                  {metas.length > 1 && !(bridge && open) && st !== 'running' && st !== 'waiting' && (
+                    <button type="button" className="x" title="Bỏ khỏi danh sách (không xoá thư mục)" aria-label={`Bỏ project ${p.name} khỏi danh sách`} onClick={() => removeProject(p.id)}>✕</button>
                   )}
                 </div>
                 <p className="proj-sub">
-                  {p.path || 'chưa chọn thư mục'} · {STATUS_LABEL[st]}
+                  <span title={p.path}>{p.path || 'chưa mở thư mục'}</span> · {STATUS_LABEL[st]}
                   {bridge && open && <button type="button" className="link" onClick={pickPath}>📁 {p.path ? 'Đổi' : 'Chọn'}</button>}
                 </p>
                 {open && (
@@ -485,9 +620,12 @@ export default function App() {
                     {w.team.map(m => {
                       const ag = w.agents[m.id], lead = w.orch === m.id, ch = castOf(m.id);
                       return (
-                        <li key={m.id} className={`ag s-${ag.state}`} style={cssVars({ '--c': ch.color })}>
+                        <li key={m.id} data-agent={m.id} className={`ag s-${ag.state}${m.id === shownId ? ' on' : ''}`} style={cssVars({ '--c': ch.color })}>
                           <img className="face sm" src={frameUrl(ch.id, 'idle', 0)} alt="" />
-                          <div className="ag-main"><b>{m.label}{m.role && <em className="role">{m.role}</em>}</b><span>{ag.task ? `${ag.task} · ${ag.label ?? ''}` : STATE_LABEL[ag.state]}</span></div>
+                          <button type="button" className="ag-main" aria-current={m.id === shownId}
+                            title="Bấm: xem nhanh · bấm đúp: mở tab" onClick={() => previewTab(m.id)} onDoubleClick={() => pinTab(m.id)}>
+                            <b>{m.label}{m.role && <em className="role">{m.role}</em>}</b><span>{ag.task ? `${ag.task} · ${ag.label ?? ''}` : STATE_LABEL[ag.state]}</span>
+                          </button>
                           <button type="button" className="x" title={`Đổi tên / vai trò ${m.label}`} aria-label={`Đổi tên ${m.label}`}
                             onClick={() => setEditing(e => (e === m.id ? null : m.id))}>✎</button>
                           <button type="button" className={`crown${lead ? ' on' : ''}`} aria-pressed={lead} disabled={busy}
@@ -507,7 +645,7 @@ export default function App() {
                       );
                     })}
                     <li>
-                      {providers.length
+                      {bridge && !p.path ? <p className="tree-note">Mở thư mục trước, rồi thêm agent.</p> : providers.length
                         ? <AddAgent providers={providers} count={w.team.length} onAdd={addMember} />
                         : <p className="tree-note">Chưa có provider. Mở ⚙ Providers để thêm.</p>}
                     </li>
@@ -542,13 +680,22 @@ export default function App() {
         <div className="tabs" role="tablist">
           <button type="button" className="tab sb-toggle" aria-pressed={sbOpen} title={`${sbOpen ? 'Ẩn' : 'Hiện'} sidebar (Ctrl+B)`}
             aria-label={`${sbOpen ? 'Ẩn' : 'Hiện'} sidebar`} onClick={() => setSbOpen(o => !o)}>☰</button>
-          {metas.map(p => (
-            <button key={p.id} type="button" role="tab" aria-selected={p.id === meta.id} className={`tab${p.id === meta.id ? ' on' : ''}`} onClick={() => switchTo(p.id)}>
-              <span className={`dot2 d-${statusOf(p.id)}`} aria-hidden="true" />
-              {worlds[p.id]?.mission || p.name}
-            </button>
-          ))}
-          <button type="button" className="tab add" title="Project mới" aria-label="Project mới" onClick={() => setAdding(true)}>＋</button>
+          {tabIds.map(id => {
+            const m = w.team.find(x => x.id === id)!, ag = w.agents[id], on = id === shownId, isPv = id === pv;
+            return (
+              <div key={id} data-agent={id} className={`tab${on ? ' on' : ''}${isPv ? ' pv' : ''}`} style={cssVars({ '--c': castOf(id).color })}
+                onAuxClick={e => { if (e.button === 1) closeTab(id); }}>
+                <button type="button" role="tab" aria-selected={on} className="tab-btn"
+                  title={isPv ? 'Xem nhanh · bấm đúp để giữ tab' : m.label} onClick={() => previewTab(id)} onDoubleClick={() => pinTab(id)}>
+                  <img className="face xs" src={frameUrl(castOf(id).id, 'idle', 0)} alt="" />
+                  <span className="tab-name">{m.label}</span>
+                  {id === w.orch && <span className="tab-lead" aria-label="chỉ huy">👑</span>}
+                  <span className={`dot2 d-${ag.state === 'working' ? 'running' : ag.state === 'blocked' ? 'waiting' : 'idle'}`} aria-hidden="true" />
+                </button>
+                <button type="button" className="tab-x" title="Đóng tab (Ctrl+W)" aria-label={`Đóng tab ${m.label}`} onClick={() => closeTab(id)}>✕</button>
+              </div>
+            );
+          })}
           <div className="tab-tools">
             <span className="part">{w.part ? `PART ${w.part}` : 'PROLOGUE'}</span>
             <button type="button" disabled={!busy} onClick={() => patchRun({ playing: !run?.playing })}>{run?.playing === false ? '▶ Tiếp' : '⏸ Dừng'}</button>
@@ -557,8 +704,8 @@ export default function App() {
           </div>
         </div>
 
-        <div className="panes" ref={gridRef} style={cssVars({ '--cols': cols })}>
-          {[...w.team].sort((a, b) => Number(b.id === w.orch) - Number(a.id === w.orch)).map(m => (
+        <div className="panes" ref={gridRef}>
+          {shownMember && [shownMember].map(m => (
             <Pane key={m.id} member={m} agent={w.agents[m.id]} char={castOf(m.id)} isOrch={w.orch === m.id}
               task={w.agents[m.id].task ? w.tasks[w.agents[m.id].task!] : undefined}
               log={w.log} nameOf={nameOf} access={w.access[m.id] ?? 'ask'} busy={!bridge && busy}
@@ -577,15 +724,25 @@ export default function App() {
           {w.team.length === 0 && (
             <div className="empty-state">
               <p className="es-kana" aria-hidden="true">ゴゴゴゴ</p>
-              <h2>Đội Stand đang trống</h2>
-              <ol>
-                <li>Mở <b>⚙ Providers</b>, thêm agent CLI bất kỳ có ACP: tên + lệnh chạy.</li>
-                <li>{bridge ? <>Bấm <b>📁 Chọn</b> để gắn thư mục cho project.</> : 'Gắn thư mục cho project (bản app desktop).'}</li>
-                <li>Bấm <b>+ Sub-agent</b> dưới project. Agent đầu tiên làm chỉ huy 👑.</li>
-              </ol>
+              {!meta.path ? (
+                <>
+                  <h2>Mở một thư mục để bắt đầu</h2>
+                  <p className="es-sub">Mỗi thư mục là một project, mở trong cửa sổ riêng, như VS Code.</p>
+                  <button type="button" className="cta" onClick={openFolder}>Mở thư mục…</button>
+                  {adding && <NewProject onOpen={openPath} onCancel={() => setAdding(false)} />}
+                </>
+              ) : (
+                <>
+                  <h2>Đội Stand đang trống</h2>
+                  <ol>
+                    <li>Mở <b>⚙ Providers</b> ở sidebar, thêm agent CLI có ACP: tên + lệnh chạy.</li>
+                    <li>Bấm <b>+ Sub-agent</b> dưới project. Agent đầu tiên làm chỉ huy 👑.</li>
+                    <li>Khi cần thêm người, chỉ huy sẽ hỏi bạn qua một cửa sổ để chọn model và effort.</li>
+                  </ol>
+                </>
+              )}
             </div>
           )}
-          <Flights flights={w.flights} pos={pos} onLand={key => dispatch({ t: 'land', key })} />
         </div>
 
         <footer className="statusbar" aria-label="Quota và token">
@@ -604,7 +761,15 @@ export default function App() {
         <Player key={s.id} run={runs[s.id]} waiting={!!worlds[s.id]?.perm}
           fire={ev => { dispatch(ev, s.id); setRuns(r => ({ ...r, [s.id]: { ...r[s.id], idx: r[s.id].idx + 1 } })); }} />
       ))}
+      <Flights flights={w.flights} pos={pos} onLand={key => dispatch({ t: 'land', key })} />
       <Overlay fx={w.fx} onDone={() => dispatch({ t: 'fx.done' })} />
+      {spawnReq?.sid === meta.id && w.agents[spawnReq.id] && (
+        <SpawnDialog key={spawnReq.id} leader={nameOf(spawnReq.by)} member={w.team.find(m => m.id === spawnReq.id)!} agent={w.agents[spawnReq.id]}
+          char={castOf(spawnReq.id)} providers={providers} needsFolder={!meta.path}
+          onProvider={pid => changeProvider(spawnReq.id, pid)}
+          onConfig={(configId, value) => setMemberConfig(meta.id, spawnReq.id, configId, value)}
+          onAnswer={answerSpawn} />
+      )}
     </div>
   );
 }

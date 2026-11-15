@@ -37,7 +37,6 @@ code { font: 600 11px ui-monospace, Consolas, monospace; color: var(--mute); ove
 .sb-top { display: flex; align-items: baseline; justify-content: space-between; padding: 2px 4px 4px; }
 .brand { font: 400 24px/1 "Dela Gothic One", sans-serif; color: var(--gold); transform: skewX(-10deg); text-shadow: 2px 2px 0 var(--mag), 4px 4px 0 var(--black); }
 .menace { font: 400 14px "Dela Gothic One", sans-serif; color: #b07de0; animation: menace 1.4s ease-in-out infinite; }
-.search { font-size: 16px; padding: 7px 10px; background: var(--black); border: 2px solid #3a2560; }
 .sb-nav { display: grid; gap: 4px; }
 .sb-nav > button {
   display: flex; justify-content: space-between; align-items: center; text-align: left;
@@ -66,11 +65,15 @@ code { font: 600 11px ui-monospace, Consolas, monospace; color: var(--mute); ove
 .agents { margin-left: 12px !important; padding-left: 10px !important; background: linear-gradient(#3a2560, #3a2560) 0 0 / 2px 100% no-repeat; }
 .ag { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto auto; gap: 6px; align-items: center; padding: 4px 4px; }
 .ag:hover { background: rgba(255,255,255,.04); }
-.ag-main { display: grid; min-width: 0; line-height: 1.2; }
+.ag.on { background: rgba(255,207,63,.08); box-shadow: inset 3px 0 0 var(--c); }
+/* the agent name is the click target: click = preview tab, double click = pinned tab */
+.ag-main { display: grid; min-width: 0; min-height: 36px; align-content: center; line-height: 1.2; padding: 2px 4px; background: transparent; border: 0; text-align: left; user-select: none; }
+.ag-main:hover b { text-decoration: underline; text-underline-offset: 3px; }
 .ag-main b { font-size: 13px; color: var(--c); }
 .ag-main span { font-size: 11px; color: var(--mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .face { width: 38px; height: 38px; object-fit: cover; object-position: 50% 8%; border: 2px solid var(--c); background: var(--black); image-rendering: pixelated; flex: none; }
 .face.sm { width: 30px; height: 30px; }
+.face.xs { width: 20px; height: 20px; border-width: 1px; }
 .crown { width: 28px; height: 28px; border: 2px solid var(--black); background: var(--black); filter: grayscale(1); opacity: .45; font-size: 13px; }
 .crown.on { filter: none; opacity: 1; background: var(--gold); box-shadow: 2px 2px 0 var(--mag); }
 .crown:not(:disabled):hover { opacity: 1; filter: none; }
@@ -110,19 +113,22 @@ code { font: 600 11px ui-monospace, Consolas, monospace; color: var(--mute); ove
   background: transparent; border: 0; font-weight: 700; color: var(--mute); transform: skewX(-8deg);
 }
 .tab:hover { color: var(--ink); background: var(--panel2); }
-.tab.on { color: var(--ink); background: var(--bg); box-shadow: inset 0 -3px 0 var(--gold); }
+.tab.on { color: var(--ink); background: var(--bg); box-shadow: inset 0 -3px 0 var(--c, var(--gold)); }
 .tab.add { font-size: 16px; }
+div.tab { padding: 0 4px 0 0; gap: 0; overflow: visible; }
+.tab-btn { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 36px; padding: 0 6px 0 12px; background: transparent; border: 0; font-weight: inherit; color: inherit; user-select: none; }
+.tab-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tab.pv .tab-name { font-style: italic; font-weight: 500; } /* preview tab, replaced by the next single click */
+.tab-lead { font-size: 12px; }
+.tab-x { width: 24px; height: 24px; display: grid; place-items: center; background: transparent; border: 0; color: var(--mute); font-size: 11px; opacity: 0; transition: opacity .15s, background-color .15s; }
+.tab.on .tab-x, .tab:hover .tab-x, .tab-x:focus-visible { opacity: 1; }
+.tab-x:hover { background: rgba(255,255,255,.1); color: var(--ink); }
 .tab-tools { margin-left: auto; display: flex; align-items: center; gap: 6px; padding-bottom: 6px; }
 .part { font: 400 16px "Dela Gothic One", sans-serif; color: var(--gold); transform: skewX(-8deg); margin-right: 6px; text-shadow: 2px 2px 0 var(--black); }
 .tab-tools button { font-weight: 800; font-size: 12px; padding: 5px 9px; background: var(--black); border: 2px solid var(--gold); box-shadow: 2px 2px 0 var(--mag); }
 
 /* split panes: 2-4 columns, 2 rows on one screen */
-.panes {
-  position: relative; min-height: 0; overflow-y: auto;
-  display: grid; gap: 3px; background: var(--line);
-  grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
-  grid-auto-rows: calc((100% - 3px) / 2);
-}
+.panes { position: relative; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-rows: 100%; background: var(--line); }
 .pane { position: relative; display: grid; grid-template-rows: auto minmax(0, 1.3fr) minmax(0, 1fr) auto; min-height: 300px; min-width: 0; background: var(--bg); }
 .pane.lead { box-shadow: inset 0 0 0 2px var(--gold); }
 
@@ -209,7 +215,7 @@ code { font: 600 11px ui-monospace, Consolas, monospace; color: var(--mute); ove
 
 /* messages and checkpoints flying between panes */
 .flight {
-  position: absolute; left: 0; top: 0; z-index: 6; max-width: 240px; padding: 6px 10px;
+  position: fixed; left: 0; top: 0; z-index: 6; max-width: 240px; padding: 6px 10px;
   background: #fff; color: var(--black); border-radius: 14px; box-shadow: inset 0 0 0 3px var(--black), 4px 4px 0 rgba(0,0,0,.5);
   font-weight: 800; font-size: 12px; animation: fly 2.8s cubic-bezier(.5,0,.3,1) forwards; pointer-events: none;
 }
@@ -266,22 +272,23 @@ code { font: 600 11px ui-monospace, Consolas, monospace; color: var(--mute); ove
 
 @media (max-width: 1100px) {
   .frame:not(.sb-off) { grid-template-columns: min(var(--sb, 272px), 40vw) 5px minmax(0, 1fr); }
-  .panes { --cols: 2 !important; }
 }
 @media (max-width: 760px) {
   .frame, .frame:not(.sb-off) { height: auto; grid-template-columns: 1fr; }
   .sb-resize { display: none; }
   .workspace { min-height: 100dvh; }
-  .panes { --cols: 1 !important; grid-auto-rows: 460px; overflow: visible; }
+  .panes { grid-auto-rows: minmax(460px, auto); overflow: visible; }
   .flight { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .cry, .menace, .s-working .burst, .fx-handoff::before, .d-running, .d-waiting { animation: none; }
+  .cry, .menace, .s-working .burst, .fx-handoff::before, .d-running, .d-waiting, .es-kana { animation: none; }
+  .flight { display: none; }
+  .spawn[open] { animation: none; }
 }
 
 /* ---------- empty team + real-agent bits ---------- */
 .empty-state {
-  grid-column: 1 / -1; grid-row: span 2; align-self: center; justify-self: center; max-width: 520px;
+  grid-column: 1 / -1; align-self: center; justify-self: center; max-width: 520px;
   padding: 28px 32px; background: var(--panel); box-shadow: inset 0 0 0 2px #3a2560, 6px 6px 0 var(--black);
 }
 .empty-state h2 { margin: 0 0 12px; font: 400 26px "Dela Gothic One", sans-serif; transform: skewX(-8deg); color: var(--gold); }
@@ -308,3 +315,32 @@ code { font: 600 11px ui-monospace, Consolas, monospace; color: var(--mute); ove
 .role { margin-left: 6px; padding: 0 5px; font: 800 10px "Be Vietnam Pro", sans-serif; font-style: normal; color: var(--black); background: var(--c, var(--mute)); text-transform: uppercase; letter-spacing: .04em; }
 .ag { grid-template-columns: 30px minmax(0, 1fr) auto auto auto; }
 .member-edit { grid-column: 1 / -1; }
+
+/* ---------- Open Folder empty window, spawn approval dialog ---------- */
+.es-sub { margin: 0 0 16px; color: var(--mute); }
+.cta {
+  min-height: 40px; padding: 8px 18px; font: 400 15px "Dela Gothic One", sans-serif; color: var(--black); background: var(--gold);
+  border: 2px solid var(--black); box-shadow: 3px 3px 0 var(--mag); transform: skewX(-8deg); transition: transform .15s, box-shadow .15s;
+}
+.cta:hover { transform: skewX(-8deg) translate(-1px, -1px); box-shadow: 4px 4px 0 var(--mag); }
+.cta:active { transform: skewX(-8deg) translate(2px, 2px); box-shadow: 1px 1px 0 var(--mag); }
+.empty-state .stack-form { margin-top: 12px; }
+.field { display: grid; gap: 4px; font-size: 12px; font-weight: 700; color: var(--mute); }
+.field input, .field select { min-height: 36px; font-size: 14px; font-weight: 500; padding: 6px 8px; color: var(--ink); background: #0f0819; border: 2px solid #3a2560; }
+.field input:focus-visible, .field select:focus-visible { outline: none; border-color: var(--gold); }
+.field select:disabled { opacity: .6; }
+
+.spawn { width: min(520px, calc(100vw - 32px)); padding: 0; color: var(--ink); background: var(--panel); border: 0; box-shadow: inset 0 0 0 3px var(--c, var(--gold)), 8px 8px 0 var(--black); }
+.spawn::backdrop { background: rgba(11, 6, 18, .6); }
+.spawn[open] { animation: pop .2s cubic-bezier(.2, 1.3, .4, 1); }
+.spawn form { display: grid; gap: 14px; padding: 20px 22px; }
+.spawn-head { display: flex; gap: 12px; align-items: center; }
+.spawn-head .face { width: 56px; height: 56px; }
+.spawn-kicker { margin: 0; font-size: 12px; font-weight: 800; color: var(--gold); }
+.spawn h2 { margin: 2px 0 0; font: 400 20px/1.25 "Dela Gothic One", sans-serif; transform: skewX(-6deg); }
+.spawn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+.spawn-note { margin: 0; font-size: 12px; color: var(--mute); }
+.spawn-btns { display: flex; justify-content: flex-end; gap: 10px; }
+.spawn-btns .ghost { width: auto; min-height: 40px; padding: 8px 16px; }
+@keyframes pop { from { transform: scale(.94); opacity: 0; } }
+@media (max-width: 520px) { .spawn-grid { grid-template-columns: 1fr; } }
