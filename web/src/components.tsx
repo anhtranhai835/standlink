@@ -1,40 +1,44 @@
 import { useEffect, useRef, useState, type CSSProperties, type Ref } from 'react';
-import { frameUrl, type Character, type Row } from './characters';
+import { SKILLS, frameUrl, framesOf, type Character, type Row } from './characters';
 import { MAX_TEAM, type Access, type Agent, type AgentId, type Flight, type Fx, type LogItem, type Member, type Provider, type Task } from './world';
 
-const FRAMES = 8;
 const FRAME_MS = 170; // ~6fps: slow enough to read each move
 export const cssVars = (v: Record<string, string | number>) => v as CSSProperties;
 
-/** Plays one sprite-sheet row. once = play to the last frame, hold it, then call onEnd. */
-export function Sprite({ char, row, once, frozen, onEnd }: {
-  char: Character; row: Row; once?: boolean; frozen?: boolean; onEnd?: () => void;
+/**
+ * Plays one sprite-sheet row from its first playable frame. Mount it with a key per row,
+ * so a new move always starts at frame 1 instead of mid-way through the previous one.
+ * once = play to the last frame, hold it for `hold` ms, then call onEnd.
+ */
+export function Sprite({ char, row, once, frozen, hold = 700, onEnd }: {
+  char: Character; row: Row; once?: boolean; frozen?: boolean; hold?: number; onEnd?: () => void;
 }) {
-  const [f, setF] = useState(0);
+  const frames = framesOf(char.id, row);
+  const [i, setI] = useState(0);
   const [missing, setMissing] = useState(false);
   const endRef = useRef(onEnd);
   endRef.current = onEnd;
+  const last = frames.length - 1;
 
-  useEffect(() => { setF(0); setMissing(false); }, [char.id, row]);
   useEffect(() => {
     if (frozen) return;
-    const id = setInterval(() => setF(x => (x >= FRAMES - 1 ? (once ? x : 0) : x + 1)), FRAME_MS);
+    const id = setInterval(() => setI(x => (x >= last ? (once ? x : 0) : x + 1)), FRAME_MS);
     return () => clearInterval(id);
-  }, [char.id, row, once, frozen]);
+  }, [last, once, frozen]);
   useEffect(() => {
-    if (!once || f !== FRAMES - 1) return;
-    const id = setTimeout(() => endRef.current?.(), 700); // hold the finishing pose
+    if (!once || i < last) return;
+    const id = setTimeout(() => endRef.current?.(), hold); // hold the finishing pose
     return () => clearTimeout(id);
-  }, [once, f]);
+  }, [once, i, last, hold]);
 
   if (missing) return <div className="sprite-missing">「{char.stand}」</div>;
-  return <img className="sprite" src={frameUrl(char.id, row, f)} alt={`${char.user} và ${char.stand}`} draggable={false} onError={() => setMissing(true)} />;
+  return <img className="sprite" src={frameUrl(char.id, row, frames[Math.min(i, last)])} alt={`${char.user} và ${char.stand}`} draggable={false} onError={() => setMissing(true)} />;
 }
 
 /** Warm the browser cache so the first play of a row does not flicker. */
 export function preload(char: Character) {
-  (['idle', 'skill1', 'skill2', 'skill3'] as Row[]).forEach(r => {
-    for (let i = 0; i < FRAMES; i++) new Image().src = frameUrl(char.id, r, i);
+  (['idle', ...SKILLS] as Row[]).forEach(r => {
+    for (const f of framesOf(char.id, r)) new Image().src = frameUrl(char.id, r, f);
   });
 }
 
@@ -56,10 +60,21 @@ export function Pane({ member, agent, task, char, isOrch, log, nameOf, access, b
   nameOf: (id?: AgentId) => string; access: Access; busy: boolean; perm: string | null; stageRef: Ref<HTMLDivElement>;
   onReroll: () => void; onPerm: (ok: boolean) => void; onAccess: (m: Access) => void; onSend: (text: string) => void;
 }) {
-  const [act, setAct] = useState<'special' | 'finisher' | null>(null);
-  useEffect(() => { if (agent.act) setAct(agent.act.kind); }, [agent.act?.key]);
-  useEffect(() => setAct(null), [char.id]);
-  const row: Row = act ? char[act] : agent.state === 'working' ? char.work : 'idle';
+  // `show` = a one-off move playing right now (talking, taking over, finishing, or an idle flourish).
+  const [show, setShow] = useState<Row | null>(null);
+  const [round, setRound] = useState(0); // which of the 3 skills is up while working
+  useEffect(() => { if (agent.act) setShow(char[agent.act.kind]); }, [agent.act?.key]);
+  useEffect(() => { setShow(null); setRound(0); }, [char.id]);
+  // Idle Stands strike a random pose now and then, so every move of the sheet gets seen.
+  useEffect(() => {
+    if (agent.state !== 'idle' || show) return;
+    const id = setTimeout(() => setShow(SKILLS[Math.floor(Math.random() * SKILLS.length)]), 7000 + Math.random() * 7000);
+    return () => clearTimeout(id);
+  }, [agent.state, show, char.id]);
+  // Working: cycle through all three skills, starting with the character's main attack.
+  const workRows = [char.work, ...SKILLS.filter(r => r !== char.work)];
+  const working = agent.state === 'working';
+  const row: Row = show ?? (working ? workRows[round % workRows.length] : 'idle');
   const cry = CRY[agent.state](char);
 
   return (
@@ -76,7 +91,11 @@ export function Pane({ member, agent, task, char, isOrch, log, nameOf, access, b
 
       <div className="stage" ref={stageRef}>
         <div className="burst" aria-hidden="true" />
-        <div className="actor"><Sprite char={char} row={row} once={!!act} frozen={agent.state === 'limited'} onEnd={() => setAct(null)} /></div>
+        <div className="actor">
+          <Sprite key={`${char.id}-${row}-${show ? 's' : round}`} char={char} row={row}
+            once={!!show || working} hold={show ? 700 : 250} frozen={agent.state === 'limited'}
+            onEnd={() => (show ? setShow(null) : setRound(r => r + 1))} />
+        </div>
         {cry && <span className="cry" aria-hidden="true">{cry}</span>}
         <Target task={task} agent={agent} />
         {agent.state === 'limited' && <div className="stamp">TIME STOP<small>reset sau {agent.resetIn}</small></div>}

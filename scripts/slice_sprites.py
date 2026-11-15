@@ -3,6 +3,7 @@
 Usage: python scripts/slice_sprites.py [src_dir] [out_dir]
 Output: out_dir/<character>/<row>-<nn>.png, rows = idle, skill1, skill2, skill3.
 """
+import json
 import sys
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from PIL import Image
 COLS, ROWS = 8, 4
 ROW_NAMES = ["idle", "skill1", "skill2", "skill3"]
 INSET = 3  # px trimmed inside each cell to drop the black grid lines
+FULL_BG = 0.9  # a frame this opaque is a painted background (e.g. a time-stop scene), not a pose
 
 
 def grid_lines(dark: np.ndarray, axis: int, count: int) -> list[int]:
@@ -48,21 +50,24 @@ def key_magenta(rgb: np.ndarray) -> np.ndarray:
     return np.where(bg, 0, 255).astype(np.uint8)
 
 
-def slice_sheet(path: Path, out_dir: Path) -> int:
+def slice_sheet(path: Path, out_dir: Path) -> dict[str, list[int]]:
     img = np.array(Image.open(path).convert("RGB"))
     dark = img.sum(axis=2) < 120
     xs, ys = grid_lines(dark, 0, COLS), grid_lines(dark, 1, ROWS)
     name = path.stem.split("-", 1)[-1]
     dest = out_dir / name
     dest.mkdir(parents=True, exist_ok=True)
-    n = 0
+    playable: dict[str, list[int]] = {}
     for ri in range(ROWS):
+        keep = []
         for ci in range(COLS):
             cell = img[ys[ri] + INSET: ys[ri + 1] - INSET, xs[ci] + INSET: xs[ci + 1] - INSET]
-            rgba = np.dstack([cell, key_magenta(cell)])
-            Image.fromarray(rgba, "RGBA").save(dest / f"{ROW_NAMES[ri]}-{ci + 1:02d}.png")
-            n += 1
-    return n
+            alpha = key_magenta(cell)
+            Image.fromarray(np.dstack([cell, alpha]), "RGBA").save(dest / f"{ROW_NAMES[ri]}-{ci + 1:02d}.png")
+            if (alpha > 0).mean() < FULL_BG:
+                keep.append(ci)
+        playable[ROW_NAMES[ri]] = keep or list(range(COLS))  # never leave a row empty
+    return playable
 
 
 def _self_check() -> None:
@@ -79,5 +84,10 @@ if __name__ == "__main__":
     _self_check()
     src = Path(sys.argv[1] if len(sys.argv) > 1 else "prototype/assets/sprites")
     out = Path(sys.argv[2] if len(sys.argv) > 2 else "web/public/sprites")
+    manifest = {}
     for sheet in sorted(src.glob("*.webp")):
-        print(f"{sheet.name}: {slice_sheet(sheet, out)} frames")
+        rows = slice_sheet(sheet, out)
+        manifest[sheet.stem.split("-", 1)[-1]] = rows
+        print(f"{sheet.name}: " + ", ".join(f"{r} {len(f)}/{COLS}" for r, f in rows.items()))
+    # which frames of each row the app should play (0-based), so painted-background frames are skipped
+    (out / "manifest.json").write_text(json.dumps(manifest, separators=(",", ":")), encoding="utf-8")

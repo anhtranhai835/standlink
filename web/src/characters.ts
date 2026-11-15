@@ -18,7 +18,7 @@ const c = (id: string, user: string, stand: string, color: string, work: Row, sp
   ({ id, user, stand, color, work, special, finisher, cry });
 
 export const CHARACTERS: Character[] = [
-  c('jotaro', 'Jotaro Kujo', 'STAR PLATINUM', '#9a7bff', 'skill1', 'skill2', 'skill2', 'オラオラ'),
+  c('jotaro', 'Jotaro Kujo', 'STAR PLATINUM', '#9a7bff', 'skill1', 'skill2', 'skill3', 'オラオラ'),
   c('dio', 'DIO', 'THE WORLD', '#f2c230', 'skill2', 'skill1', 'skill3', '無駄無駄'),
   c('joseph', 'Joseph Joestar', 'HERMIT PURPLE', '#b07de0', 'skill2', 'skill1', 'skill3', 'ゴゴゴ'),
   c('kakyoin', 'Noriaki Kakyoin', 'HIEROPHANT GREEN', '#3fd17a', 'skill1', 'skill2', 'skill3', 'レロレロ'),
@@ -28,7 +28,8 @@ export const CHARACTERS: Character[] = [
   c('okuyasu', 'Okuyasu Nijimura', 'THE HAND', '#4a86ff', 'skill1', 'skill2', 'skill3', 'ガオン'),
   c('giorno', 'Giorno Giovanna', 'GOLD EXPERIENCE', '#ffd24a', 'skill3', 'skill1', 'skill2', '無駄無駄'),
   c('bucciarati', 'Bruno Bucciarati', 'STICKY FINGERS', '#74b0ff', 'skill3', 'skill1', 'skill2', 'アリアリ'),
-  c('diavolo', 'Diavolo', 'KING CRIMSON', '#e23a4a', 'skill3', 'skill1', 'skill2', 'ドドドド'),
+  // skill2 (time erase) is almost all painted background, so it never ends a task
+  c('diavolo', 'Diavolo', 'KING CRIMSON', '#e23a4a', 'skill3', 'skill1', 'skill3', 'ドドドド'),
   c('jolyne', 'Jolyne Cujoh', 'STONE FREE', '#4fc3ff', 'skill3', 'skill1', 'skill2', 'オラオラ'),
   c('pucci', 'Enrico Pucci', 'WHITESNAKE', '#e6e6ee', 'skill1', 'skill2', 'skill3', 'ゴゴゴ'),
   c('rohan', 'Rohan Kishibe', "HEAVEN'S DOOR", '#d9c27a', 'skill1', 'skill2', 'skill3', 'ドォーン'),
@@ -38,6 +39,17 @@ export const CHARACTERS: Character[] = [
 export const byId = (id: string) => CHARACTERS.find(ch => ch.id === id) ?? CHARACTERS[0];
 
 export const frameUrl = (id: string, row: Row, i: number) => `sprites/${id}/${row}-${String(i + 1).padStart(2, '0')}.png`;
+
+export const SKILLS: Row[] = ['skill1', 'skill2', 'skill3'];
+const ALL_FRAMES = [0, 1, 2, 3, 4, 5, 6, 7];
+
+/**
+ * Playable frames per row, written by scripts/slice_sprites.py. Frames that are a painted
+ * background (a whole time-stop scene) are left out so a pane never shows a dark box.
+ */
+let manifest: Record<string, Partial<Record<Row, number[]>>> = {};
+fetch('sprites/manifest.json').then(r => (r.ok ? r.json() : {})).then(m => { manifest = m; }).catch(() => { /* no sprites yet */ });
+export const framesOf = (id: string, row: Row): number[] => manifest[id]?.[row] ?? ALL_FRAMES;
 
 /** n distinct random characters. */
 export function randomCast(n: number): string[] {
