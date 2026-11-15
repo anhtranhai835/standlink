@@ -54,6 +54,16 @@ Electron itself (`ELECTRON_RUN_AS_NODE`) and reached over a token-checked localh
 writes them itself from recorded ACP events (`buildCheckpoint` in `web/src/world.ts`), so a
 rate-limited agent spends zero tokens on them. Team rules go out once per agent session, not per turn.
 
+Model and effort: each agent is started without a prompt (no tokens) so its ACP `configOptions` are
+known; the pane composer shows pickers for the `model` and `thought_level` categories and calls
+`session/set_config_option`. Choices are saved per member and re-applied on a new session.
+Verified on codex-acp (effort high → low, model switch). `assign` takes an optional `effort`.
+
+Skills: markdown playbooks in `<project>/.standlink/skills/` (wins) or the app library
+(`userData/skills`). Agents get names + one-line descriptions in the team rules and load a body
+only via the `skill(name)` MCP tool, answered from disk by the main process. `assign` takes
+`skills[]` to attach playbooks to a task. Names are restricted to `[a-z0-9-]` (no path tricks).
+
 - Agent state comes from ACP events. Rate limit = `session/prompt` error or abnormal `stopReason`.
 - Checkpoint schema: task id, done steps, touched files, next step, open questions. Target < 400 tokens.
 - One git worktree per worker task.

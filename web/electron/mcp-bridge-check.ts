@@ -37,7 +37,7 @@ rpc(3, 'tools/call', { name: 'board', arguments: {} });
 await new Promise(r => setTimeout(r, 1500));
 proc.kill();
 console.assert(replies.get(1)?.result?.serverInfo?.name === 'standlink', 'initialize failed');
-console.assert(replies.get(2)?.result?.tools?.map((t: { name: string }) => t.name).join() === 'board,assign,ask', 'tools/list wrong');
+console.assert(replies.get(2)?.result?.tools?.map((t: { name: string }) => t.name).join() === 'board,assign,ask,skill', 'tools/list wrong');
 console.assert(String(replies.get(3)?.result?.content?.[0]?.text).includes('chỉ huy'), 'tools/call did not reach the app');
 console.assert(calls[0]?.memberId === 'codex' && calls[0]?.tool === 'board', 'call identity wrong');
 console.log('protocol check ok:', replies.size === 3 && calls.length === 1);

@@ -35,6 +35,7 @@ export interface Agent {
   file?: string;
   resetIn?: string;
   draft?: string; // reply being streamed right now
+  config?: ConfigOption[]; // what this agent lets you choose (from ACP session/new)
   ctx?: number; // % of the context window used (from ACP usage_update)
   act?: { kind: 'special' | 'finisher'; key: number };
 }
@@ -48,6 +49,11 @@ export interface Task {
 }
 export interface LogItem { key: number; kind: 'narrate' | 'say' | 'step' | 'sfx' | 'user'; agent?: AgentId; to?: AgentId; text: string; sfx?: string }
 export interface Fx { kind: 'title' | 'timestop' | 'tbc' | 'handoff' | 'clear'; text: string; sub?: string; key: number }
+/** An ACP session config option (model, reasoning effort…) as the agent advertises it. */
+export interface ConfigOption {
+  id: string; name: string; category?: string; currentValue?: string;
+  options?: ({ value: string; name: string } | { name?: string; options: { value: string; name: string }[] })[];
+}
 export interface PermOption { optionId: string; name: string; kind: string }
 export interface Flight { from: AgentId; to: AgentId; text: string; kind: 'say' | 'scroll'; key: number }
 
@@ -69,7 +75,8 @@ export type Ev =
   | { t: 'plan'; agent: AgentId; total: number; done: number }
   | { t: 'usage'; agent: AgentId; used: number; size: number }
   | { t: 'turn.end'; agent: AgentId; stopReason: string }
-  | { t: 'agent.error'; agent: AgentId; text: string };
+  | { t: 'agent.error'; agent: AgentId; text: string }
+  | { t: 'config'; agent: AgentId; options: ConfigOption[] };
 export type Action = Ev
   | { t: 'perm.answer'; ok: boolean } | { t: 'land'; key: number }
   | { t: 'start'; mission: string } | { t: 'orch'; orch: AgentId }
@@ -172,6 +179,7 @@ export function reduce(w: World, a: Action): World {
     }
     case 'agent.error':
       return { ...w, agents: patch(w.agents, a.agent, { state: 'idle', draft: '', label: 'Lỗi' }), log: log({ kind: 'sfx', agent: a.agent, sfx: '！', text: a.text }) };
+    case 'config': return w.agents[a.agent] ? { ...w, agents: patch(w.agents, a.agent, { config: a.options }) } : w;
     case 'quiet': return { ...w, fx: null, flights: [] }; // drop effects that piled up while the session ran in the background
     case 'member.add':
       return { ...w, orch: w.orch || a.member.id, team: [...w.team, a.member], agents: { ...w.agents, [a.member.id]: freshAgent(a.member) }, access: { ...w.access, [a.member.id]: 'ask' } };

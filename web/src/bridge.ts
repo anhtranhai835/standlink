@@ -1,17 +1,24 @@
 // UI side of the Electron bridge. In a plain browser `bridge` is undefined and the app runs the offline demo.
-import type { AgentId, Ev, PermOption } from './world';
+import type { AgentId, ConfigOption, Ev, PermOption } from './world';
 
 export type AgentMsg =
   | { type: 'update'; update: AcpUpdate }
   | { type: 'permission'; reqId: string; title: string; options: PermOption[] }
   | { type: 'turn-end'; stopReason: string }
   | { type: 'error'; message: string; rateLimit: boolean }
-  | { type: 'exit'; code: number | null; stderr: string };
+  | { type: 'exit'; code: number | null; stderr: string }
+  | { type: 'config'; options: ConfigOption[] };
 
 export interface AcpEventMsg { projectId: string; memberId: AgentId; msg: AgentMsg }
 
 export interface StandlinkApi {
-  prompt(a: { projectId: string; memberId: AgentId; cmd: string; cwd: string; text: string }): Promise<null>;
+  prompt(a: StartArgs & { text: string }): Promise<null>;
+  /** Start an agent without prompting it (costs no tokens) to learn its model / effort options. */
+  start(a: StartArgs): Promise<void>;
+  setConfig(projectId: string, memberId: AgentId, configId: string, value: string): Promise<void>;
+  listSkills(cwd?: string): Promise<SkillInfo[]>;
+  saveSkill(s: { name: string; description: string; body: string; cwd?: string }): Promise<void>;
+  deleteSkill(name: string, cwd?: string): Promise<void>;
   cancel(projectId: string, memberId: AgentId): Promise<void>;
   permission(reqId: string, optionId: string | null): Promise<void>;
   stop(projectId: string, memberId: AgentId): Promise<void>;
@@ -21,6 +28,9 @@ export interface StandlinkApi {
   onMcpCall(cb: (c: McpCall) => void): () => void;
   mcpReply(callId: string, text: string, isError?: boolean): Promise<void>;
 }
+
+export interface StartArgs { projectId: string; memberId: AgentId; cmd: string; cwd: string; prefs?: Record<string, string> }
+export interface SkillInfo { name: string; description: string; scope: 'project' | 'app'; file: string }
 
 export interface McpCall { callId: string; projectId: string; memberId: AgentId; tool: string; args: Record<string, unknown> }
 
@@ -36,6 +46,7 @@ interface AcpUpdate {
   entries?: { status?: string }[];
   used?: number;
   size?: number;
+  configOptions?: ConfigOption[];
 }
 
 /** Translate one ACP session/update into UI events. Unknown kinds are ignored on purpose. */
@@ -49,6 +60,8 @@ export function updateToEvents(agent: AgentId, u: AcpUpdate): Ev[] {
       const e = u.entries ?? [];
       return [{ t: 'plan', agent, total: e.length, done: e.filter(x => x.status === 'completed').length }];
     }
+    case 'config_option_update':
+      return u.configOptions ? [{ t: 'config', agent, options: u.configOptions }] : [];
     case 'usage_update':
       return typeof u.used === 'number' ? [{ t: 'usage', agent, used: u.used, size: u.size ?? 0 }] : [];
     default:

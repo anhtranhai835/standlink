@@ -1,13 +1,16 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { byId, frameUrl, pickFree } from './characters';
-import { AddAgent, Flights, NewProject, Overlay, Pane, ProviderList, STATE_LABEL, cssVars, preload } from './components';
-import { bridge, updateToEvents, type AcpEventMsg } from './bridge';
+import { AddAgent, Flights, NewProject, Overlay, Pane, ProviderList, STATE_LABEL, SkillList, cssVars, preload } from './components';
+import { bridge, updateToEvents, type AcpEventMsg, type SkillInfo } from './bridge';
 import {
   MIN_TEAM, buildCheckpoint, demoScript, initialWorld, newMember, reduce, slug,
   type Action, type AgentId, type Ev, type Member, type Provider, type World,
 } from './world';
 
-interface ProjectMeta { id: string; name: string; path: string; cast: Record<AgentId, string> }
+interface ProjectMeta {
+  id: string; name: string; path: string; cast: Record<AgentId, string>;
+  prefs?: Record<AgentId, Record<string, string>>; // per member: ACP config option id → chosen value (model, effort…)
+}
 interface SavedProject extends ProjectMeta { team: Member[]; orch: AgentId }
 interface Run { script: [number, Ev][]; idx: number; playing: boolean; speed: number }
 
@@ -74,8 +77,10 @@ export default function App() {
   const [worlds, dispatchAll] = useReducer(multi, boot, b => Object.fromEntries(b.map(s => [s.id, initialWorld(s.team, s.orch)])));
   const [runs, setRuns] = useState<Record<string, Run>>({});
   const [active, setActive] = useState(boot[0].id);
-  const [panel, setPanel] = useState<'' | 'tasks' | 'providers'>('');
+  const [panel, setPanel] = useState<'' | 'tasks' | 'providers' | 'skills'>('');
   const [adding, setAdding] = useState(false);
+  const [skills, setSkills] = useState<SkillInfo[] | null>(bridge ? [] : null);
+  const [skillsRev, setSkillsRev] = useState(0);
   const [query, setQuery] = useState('');
   const gridRef = useRef<HTMLDivElement>(null);
   const stageRefs = useRef<Record<AgentId, HTMLDivElement | null>>({});
@@ -137,8 +142,8 @@ export default function App() {
   });
 
   // ---------- real agents over ACP (Electron). In a browser the demo above is used instead. ----------
-  const latest = useRef({ worlds, metas, providers });
-  latest.current = { worlds, metas, providers };
+  const latest = useRef({ worlds, metas, providers, skills, skillsByProject: {} as Record<string, SkillInfo[]> });
+  latest.current = { ...latest.current, worlds, metas, providers, skills };
   const cmdOf = (sid: string, id: AgentId) => {
     const { worlds: ws, providers: ps } = latest.current;
     const m = ws[sid]?.team.find(x => x.id === id);
@@ -152,11 +157,13 @@ export default function App() {
   /** Team rules, prepended to the first prompt of each agent session only. */
   const preamble = (sid: string, id: AgentId) => {
     const ws = latest.current.worlds[sid];
+    const sk = latest.current.skills ?? [];
+    const skillLine = sk.length ? ` Skill của đội (đọc bằng skill(name) khi cần, đừng đọc hết): ${sk.map(x => `${x.name}${x.description ? ` — ${x.description}` : ''}`).join('; ')}.` : '';
     const roster = ws.team.map(m => `${m.id} = ${m.label}${m.id === ws.orch ? ' (chỉ huy)' : ''}`).join('; ');
     const lead = ws.team.find(m => m.id === ws.orch)?.label ?? 'chỉ huy';
     return id === ws.orch
-      ? `[Standlink] Bạn là CHỈ HUY của một đội agent. Đội: ${roster}. Dùng MCP tool "standlink": board() xem đội và task, assign(member, task, brief) giao việc, ask(member, message) hỏi nhanh. Tiết kiệm token: chia việc nhỏ, brief ngắn, không tự làm phần đã giao. Khi worker xong bạn nhận tin "[Standlink] … xong".\n\n`
-      : `[Standlink] Bạn là "${ws.team.find(m => m.id === id)?.label}" (id ${id}) trong đội do ${lead} chỉ huy. Đội: ${roster}. Có MCP tool "standlink": board(), ask(member, message). Làm đúng việc được giao, kết thúc bằng 1–3 câu tóm tắt.\n\n`;
+      ? `[Standlink] Bạn là CHỈ HUY của một đội agent. Đội: ${roster}. Dùng MCP tool "standlink": board() xem đội và task, assign(member, task, brief) giao việc, ask(member, message) hỏi nhanh. Tiết kiệm token: chia việc nhỏ, brief ngắn, không tự làm phần đã giao. Khi worker xong bạn nhận tin "[Standlink] … xong". assign còn nhận skills[] để đính skill và effort (low cho việc vặt, high cho việc khó).${skillLine}\n\n`
+      : `[Standlink] Bạn là "${ws.team.find(m => m.id === id)?.label}" (id ${id}) trong đội do ${lead} chỉ huy. Đội: ${roster}. Có MCP tool "standlink": board(), ask(member, message). Làm đúng việc được giao, kết thúc bằng 1–3 câu tóm tắt.${skillLine}\n\n`;
   };
 
   const promptAgent = (sid: string, id: AgentId, text: string, opts: { quiet?: boolean } = {}) => {
@@ -169,7 +176,7 @@ export default function App() {
     const key = `${sid}/${id}`;
     const full = primed.current.has(key) ? text : preamble(sid, id) + text;
     primed.current.add(key);
-    bridge.prompt({ projectId: sid, memberId: id, cmd, cwd: pm.path, text: full });
+    bridge.prompt({ projectId: sid, memberId: id, cmd, cwd: pm.path, text: full, prefs: pm.prefs?.[id] });
   };
 
   /** Agent-to-agent message: animate it, then deliver it as the receiver's next (queued) turn. */
@@ -202,6 +209,7 @@ export default function App() {
     if (!ws?.agents[id]) return;
     const act = (a: Action) => dispatchAll({ sid, a });
     if (m.type === 'update') updateToEvents(id, m.update).forEach(act);
+    else if (m.type === 'config') act({ t: 'config', agent: id, options: m.options });
     else if (m.type === 'permission') {
       if (ws.access[id] === 'full') {
         const allow = m.options.find(o => o.kind.startsWith('allow'));
@@ -255,12 +263,20 @@ export default function App() {
       if (!title) return reply('Thiếu task.', true);
       if (st !== 'idle') return reply(`${target.label} đang ${STATE_LABEL[st].toLowerCase()}. Chọn người khác hoặc đợi.`, true);
       const brief = String(c.args.brief ?? '').trim().slice(0, 4000);
+      const known = latest.current.skillsByProject[sid] ?? [];
+      const want = Array.isArray(c.args.skills) ? c.args.skills.map(String) : [];
+      const missing = want.filter(n => !known.some(k => k.name === n));
+      if (missing.length) return reply(`Không có skill: ${missing.join(', ')}. Có: ${known.map(k => k.name).join(', ') || 'chưa có skill nào'}.`, true);
+      const effort = String(c.args.effort ?? '').trim();
+      const effortOpt = ws.agents[target.id].config?.find(o => o.category === 'thought_level');
+      if (effort && effortOpt) setMemberConfig(sid, target.id, effortOpt.id, effort);
       const n = Math.max(taskSeq.current, 101 + Object.keys(ws.tasks).length);
       taskSeq.current = n + 1;
       const tid = `T-${n}`;
       dispatchAll({ sid, a: { t: 'say', from: c.memberId, to: target.id, text: `${tid}: ${title}` } });
       dispatchAll({ sid, a: { t: 'task.new', id: tid, title, total: 1, to: target.id, by: c.memberId, request: brief ? `${title}\n${brief}` : title } });
-      promptAgent(sid, target.id, `[Task ${tid} từ ${label(c.memberId)}] ${title}${brief ? `\n${brief}` : ''}\nXong thì trả lời 1–3 câu tóm tắt.`);
+      const skillNote = want.length ? `\nTrước khi làm, gọi skill() để đọc: ${want.join(', ')}.` : '';
+      promptAgent(sid, target.id, `[Task ${tid} từ ${label(c.memberId)}] ${title}${brief ? `\n${brief}` : ''}${skillNote}\nXong thì trả lời 1–3 câu tóm tắt.`);
       return reply(`Đã giao ${tid} cho ${target.label}. Khi xong bạn sẽ nhận tin.`);
     }
     if (c.tool === 'ask') {
@@ -293,6 +309,41 @@ export default function App() {
     if (w.orch === m.id) order(text);
     else dispatch({ t: 'ask', to: m.id, text });
   };
+  /** Change one ACP config option (model, effort…) and remember it for this member. */
+  const setMemberConfig = (sid: string, id: AgentId, configId: string, value: string) => {
+    setMetas(ms => ms.map(x => (x.id === sid ? { ...x, prefs: { ...x.prefs, [id]: { ...x.prefs?.[id], [configId]: value } } } : x)));
+    bridge?.setConfig(sid, id, configId, value);
+  };
+
+  // Start every agent of the open project (no prompt, no tokens) so its model / effort pickers appear.
+  useEffect(() => {
+    if (!bridge || !meta.path) return;
+    for (const m of w.team) {
+      const cmd = providers.find(p => p.id === m.provider)?.cmd;
+      if (cmd && !w.agents[m.id]?.config) bridge.start({ projectId: meta.id, memberId: m.id, cmd, cwd: meta.path, prefs: meta.prefs?.[m.id] });
+    }
+  }, [meta.id, meta.path, w.team.length, providers.length]);
+
+  useEffect(() => {
+    if (!bridge) return;
+    let live = true;
+    bridge.listSkills(meta.path || undefined).then(list => {
+      if (!live) return;
+      setSkills(list);
+      latest.current.skillsByProject[meta.id] = list;
+    });
+    return () => { live = false; };
+  }, [meta.id, meta.path, skillsRev]);
+
+  const saveSkill = async (sk: { name: string; description: string; body: string; project: boolean }) => {
+    await bridge!.saveSkill({ name: sk.name, description: sk.description, body: sk.body, cwd: sk.project ? meta.path : undefined });
+    setSkillsRev(r => r + 1);
+  };
+  const deleteSkillFile = async (name: string, project: boolean) => {
+    await bridge!.deleteSkill(name, project ? meta.path : undefined);
+    setSkillsRev(r => r + 1);
+  };
+
   const pickPath = async () => {
     const dir = await bridge?.pickFolder();
     if (dir) setMetas(ms => ms.map(x => (x.id === meta.id ? { ...x, path: dir } : x)));
@@ -346,6 +397,10 @@ export default function App() {
             ⚙ Providers <small>{providers.length}</small>
           </button>
           {panel === 'providers' && <ProviderList providers={providers} onAdd={addProvider} onRemove={id => setProviders(ps => ps.filter(p => p.id !== id))} />}
+          <button type="button" className={panel === 'skills' ? 'on' : ''} aria-expanded={panel === 'skills'} onClick={() => setPanel(p => (p === 'skills' ? '' : 'skills'))}>
+            ✦ Skills <small>{skills?.length ?? 0}</small>
+          </button>
+          {panel === 'skills' && <SkillList skills={skills} canProject={!!meta.path} onSave={saveSkill} onDelete={deleteSkillFile} />}
         </nav>
 
         <div className="sb-head"><span>PROJECTS</span><button type="button" className="icon" title="Project mới" aria-label="Project mới" onClick={() => setAdding(a => !a)}>＋</button></div>
@@ -426,7 +481,8 @@ export default function App() {
               onReroll={() => setCast(meta.id, c => ({ ...c, [m.id]: pickFree(Object.values(c)) }))}
               onPerm={answerPerm}
               onAccess={mode => dispatch({ t: 'access', agent: m.id, mode })}
-              onSend={text => sendTo(m, text)} />
+              onSend={text => sendTo(m, text)}
+              onConfig={(configId, value) => setMemberConfig(meta.id, m.id, configId, value)} />
           ))}
           {w.team.length === 0 && (
             <div className="empty-state">

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type Ref } from 'react';
 import { SKILLS, frameUrl, framesOf, type Character, type Row } from './characters';
-import { MAX_TEAM, type Access, type Agent, type AgentId, type Flight, type Fx, type LogItem, type Member, type Provider, type Task } from './world';
+import { MAX_TEAM, type Access, type Agent, type ConfigOption, type AgentId, type Flight, type Fx, type LogItem, type Member, type Provider, type Task } from './world';
 
 const FRAME_MS = 170; // ~6fps: slow enough to read each move
 export const cssVars = (v: Record<string, string | number>) => v as CSSProperties;
@@ -55,10 +55,11 @@ export const STATE_LABEL: Record<Agent['state'], string> = { idle: 'Chờ lệnh
  * with a JoJo stage on top where the Stand fights its task.
  */
 export function Pane({ member, agent, task, char, isOrch, log, nameOf, access, busy, perm, stageRef,
-  onReroll, onPerm, onAccess, onSend }: {
+  onReroll, onPerm, onAccess, onSend, onConfig }: {
   member: Member; agent: Agent; task?: Task; char: Character; isOrch: boolean; log: LogItem[];
   nameOf: (id?: AgentId) => string; access: Access; busy: boolean; perm: string | null; stageRef: Ref<HTMLDivElement>;
   onReroll: () => void; onPerm: (ok: boolean) => void; onAccess: (m: Access) => void; onSend: (text: string) => void;
+  onConfig: (configId: string, value: string) => void;
 }) {
   // `show` = a one-off move playing right now (talking, taking over, finishing, or an idle flourish).
   const [show, setShow] = useState<Row | null>(null);
@@ -114,6 +115,7 @@ export function Pane({ member, agent, task, char, isOrch, log, nameOf, access, b
       <Transcript id={member.id} isOrch={isOrch} log={log} nameOf={nameOf} draft={agent.draft} />
 
       <PaneComposer isOrch={isOrch} label={member.label} access={access} busy={busy} tokens={agent.tokens} quota={agent.ctx ?? agent.quota} usesCtx={agent.ctx !== undefined}
+        config={agent.config} onConfig={onConfig}
         onAccess={onAccess} onSend={onSend} />
     </section>
   );
@@ -169,8 +171,16 @@ function Transcript({ id, isOrch, log, nameOf, draft }: { id: AgentId; isOrch: b
 }
 
 /** Per-pane prompt like Orca's: talk to this agent directly; the leader's box gives the whole team an order. */
-function PaneComposer({ isOrch, label, access, busy, tokens, quota, usesCtx, onAccess, onSend }: {
+/** Model and reasoning-effort pickers, built from whatever ACP config options the agent advertises. */
+const PICKERS: { category: string; icon: string; label: string }[] = [
+  { category: 'model', icon: '🧠', label: 'Model' },
+  { category: 'thought_level', icon: '⚡', label: 'Effort' },
+];
+const flatOptions = (o: ConfigOption) => (o.options ?? []).flatMap(x => ('options' in x ? x.options : [x]));
+
+function PaneComposer({ isOrch, label, access, busy, tokens, quota, usesCtx, config, onAccess, onSend, onConfig }: {
   isOrch: boolean; label: string; access: Access; busy: boolean; tokens: number; quota: number; usesCtx: boolean;
+  config?: ConfigOption[]; onConfig: (configId: string, value: string) => void;
   onAccess: (m: Access) => void; onSend: (text: string) => void;
 }) {
   const [text, setText] = useState('');
@@ -192,6 +202,17 @@ function PaneComposer({ isOrch, label, access, busy, tokens, quota, usesCtx, onA
           <option value="ask">✋ Hỏi trước</option>
           <option value="full">⚡ Toàn quyền</option>
         </select>
+        {PICKERS.map(p => {
+          const opt = config?.find(o => o.category === p.category);
+          const choices = opt ? flatOptions(opt) : [];
+          if (!opt || choices.length < 2) return null; // the agent does not offer this choice
+          return (
+            <select key={p.category} className="cfg" value={opt.currentValue ?? ''} title={`${p.label}: ${opt.name}`}
+              aria-label={`${p.label} của ${label}`} onChange={e => onConfig(opt.id, e.target.value)}>
+              {choices.map(c => <option key={c.value} value={c.value}>{p.icon} {c.name}</option>)}
+            </select>
+          );
+        })}
         <span className="pc-meta">{tokens.toLocaleString()} tok · {usesCtx ? `context ${quota}%` : `quota ${quota}%`}</span>
         <button type="submit" className="go" disabled={locked || !text.trim()} aria-label="Gửi">{isOrch ? 'ORA!' : '↑'}</button>
       </div>
@@ -307,5 +328,55 @@ export function NewProject({ onCreate, onCancel, onPick }: {
       </div>
       <div className="row"><button type="submit" disabled={!name.trim()}>Tạo</button><button type="button" onClick={onCancel}>Huỷ</button></div>
     </form>
+  );
+}
+
+/** Team skills: shared playbooks agents load on demand with the `skill` tool. Desktop app only. */
+export function SkillList({ skills, canProject, onSave, onDelete }: {
+  skills: { name: string; description: string; scope: 'project' | 'app' }[] | null;
+  canProject: boolean;
+  onSave: (s: { name: string; description: string; body: string; project: boolean }) => Promise<void>;
+  onDelete: (name: string, project: boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [body, setBody] = useState('');
+  const [project, setProject] = useState(false);
+  const [error, setError] = useState('');
+  if (!skills) return <p className="tree-note">Skill chạy trong bản app desktop.</p>;
+  const nameOk = /^[a-z0-9][a-z0-9-]{0,47}$/.test(name);
+  const submit = async () => {
+    try {
+      await onSave({ name, description, body, project });
+      setName(''); setDescription(''); setBody(''); setOpen(false); setError('');
+    } catch (e) { setError(String((e as Error).message ?? e)); }
+  };
+  return (
+    <div className="providers">
+      <ul>
+        {skills.map(sk => (
+          <li key={`${sk.scope}-${sk.name}`}>
+            <div><b>{sk.name} <small className="scope">{sk.scope}</small></b><code>{sk.description || 'chưa có mô tả'}</code></div>
+            <button type="button" className="x" title={`Xoá skill ${sk.name}`} aria-label={`Xoá skill ${sk.name}`} onClick={() => onDelete(sk.name, sk.scope === 'project')}>✕</button>
+          </li>
+        ))}
+        {!skills.length && <li className="tree-note">Chưa có skill. Agent chỉ thấy tên + mô tả, đọc nội dung khi cần.</li>}
+      </ul>
+      {open ? (
+        <form className="stack-form" onSubmit={e => { e.preventDefault(); if (nameOk && body.trim()) submit(); }}>
+          <input value={name} onChange={e => setName(e.target.value.toLowerCase())} placeholder="tên-skill (vd: review-pr)" aria-label="Tên skill" autoFocus />
+          <input value={description} onChange={e => setDescription(e.target.value)} placeholder="Mô tả 1 dòng: khi nào dùng" aria-label="Mô tả skill" />
+          <textarea className="skill-body" value={body} onChange={e => setBody(e.target.value)} rows={6} placeholder="Hướng dẫn chi tiết (markdown)" aria-label="Nội dung skill" />
+          {canProject && (
+            <label className="check"><input type="checkbox" checked={project} onChange={e => setProject(e.target.checked)} /> Lưu trong project (.standlink/skills)</label>
+          )}
+          {error && <p className="tree-note err">{error}</p>}
+          <div className="row"><button type="submit" disabled={!nameOk || !body.trim()}>Lưu</button><button type="button" onClick={() => setOpen(false)}>Huỷ</button></div>
+        </form>
+      ) : (
+        <button type="button" className="ghost" onClick={() => setOpen(true)}>+ Skill</button>
+      )}
+    </div>
   );
 }

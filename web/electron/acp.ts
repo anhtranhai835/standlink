@@ -8,6 +8,10 @@ export const PROTOCOL_VERSION = 1;
 export interface PermissionOption { optionId: string; name: string; kind: 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always' }
 export interface PermissionRequest { sessionId: string; options: PermissionOption[]; toolCall: { toolCallId: string; title?: string; kind?: string } }
 export type PermissionOutcome = { outcome: 'selected'; optionId: string } | { outcome: 'cancelled' };
+export interface ConfigOption {
+  id: string; name: string; category?: string; type?: string; currentValue?: string;
+  options?: ({ value: string; name: string; description?: string } | { group?: string; name?: string; options: { value: string; name: string }[] })[];
+}
 export interface McpServerStdio { name: string; command: string; args: string[]; env: { name: string; value: string }[] }
 
 export interface AgentHandlers {
@@ -38,6 +42,7 @@ export class AcpAgent {
   private handlers: AgentHandlers;
   sessionId = '';
   agentInfo: unknown = null;
+  configOptions: ConfigOption[] = [];
 
   constructor(handlers: AgentHandlers) {
     this.handlers = handlers;
@@ -69,9 +74,17 @@ export class AcpAgent {
   }
 
   async newSession(cwd: string, mcpServers: McpServerStdio[] = []) {
-    const res = await this.request<{ sessionId: string }>('session/new', { cwd, mcpServers });
+    const res = await this.request<{ sessionId: string; configOptions?: ConfigOption[] }>('session/new', { cwd, mcpServers });
     this.sessionId = res.sessionId;
+    this.configOptions = res.configOptions ?? [];
     return res.sessionId;
+  }
+
+  /** ACP session config (model, reasoning effort, mode…), whatever this agent advertises. */
+  async setConfigOption(configId: string, value: string) {
+    const res = await this.request<{ configOptions?: ConfigOption[] }>('session/set_config_option', { sessionId: this.sessionId, configId, value });
+    if (res?.configOptions) this.configOptions = res.configOptions;
+    return this.configOptions;
   }
 
   /** One prompt turn. Resolves with the stop reason when the agent finishes the turn. */
