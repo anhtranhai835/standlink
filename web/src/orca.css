@@ -355,3 +355,4 @@ div.tab { padding: 0 4px 0 0; gap: 0; overflow: visible; }
 .spawn-btns .ghost { width: auto; min-height: 40px; padding: 8px 16px; }
 @keyframes pop { from { transform: scale(.94); opacity: 0; } }
 @media (max-width: 520px) { .spawn-grid { grid-template-columns: 1fr; } }
+.branch { margin-left: 8px; padding: 1px 6px; font-size: 11px; color: var(--ink); background: #0f0819; box-shadow: inset 0 0 0 1px #3a2560; white-space: nowrap; }

@@ -89,6 +89,7 @@ export function Pane({ member, agent, task, char, isOrch, log, nameOf, access, b
           <b>
             {member.label}{member.role && <em className="role">{member.role}</em>}
             {isOrch && <span className="badge">👑 CHỈ HUY</span>}
+            {agent.branch && <code className="branch" title="Agent này làm trong git worktree riêng, trên nhánh này">⎇ {agent.branch}</code>}
           </b>
           <span>{onProvider ? (
             <select className="prov-pick" value={member.provider} aria-label={`Provider của ${member.label}`}

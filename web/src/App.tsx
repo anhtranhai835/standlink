@@ -98,6 +98,7 @@ export default function App() {
   });
   const [view, setView] = useState<Record<string, View>>({});
   const [spawnReq, setSpawnReq] = useState<SpawnReq | null>(null);
+  const [gitOk, setGitOk] = useState<Record<string, boolean>>({}); // project → workers get their own git worktree
   const [panel, setPanel] = useState<'' | 'tasks' | 'providers' | 'skills'>('');
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<AgentId | null>(null); // sidebar member being renamed
@@ -234,8 +235,10 @@ export default function App() {
   });
 
   // ---------- real agents over ACP (Electron). In a browser the demo above is used instead. ----------
-  const latest = useRef({ worlds, metas, providers, skills, spawnReq, skillsByProject: {} as Record<string, SkillInfo[]> });
-  latest.current = { ...latest.current, worlds, metas, providers, skills, spawnReq };
+  const latest = useRef({ worlds, metas, providers, skills, spawnReq, gitOk, skillsByProject: {} as Record<string, SkillInfo[]> });
+  latest.current = { ...latest.current, worlds, metas, providers, skills, spawnReq, gitOk };
+  /** Workers run in their own git worktree; the leader stays in the project folder, where it merges their branches. */
+  const isolated = (sid: string, id: AgentId) => !!latest.current.gitOk[sid] && id !== latest.current.worlds[sid]?.orch;
   const cmdOf = (sid: string, id: AgentId) => {
     const { worlds: ws, providers: ps } = latest.current;
     const m = ws[sid]?.team.find(x => x.id === id);
@@ -256,9 +259,12 @@ export default function App() {
     const roleLine = me?.role ? ` Vai trò của bạn: ${me.role}; chỉ làm đúng phần của vai trò đó.` : '';
     const spawnable = latest.current.providers.map(p => p.id).join(', ');
     const lead = ws.team.find(m => m.id === ws.orch)?.label ?? 'chỉ huy';
+    const git = !!latest.current.gitOk[sid];
+    const leadGit = git ? ' Mỗi thành viên khác làm trong git worktree riêng (nhánh ghi ở board()), không đụng thư mục của bạn: khi họ báo xong, xem diff (git diff HEAD...<nhánh>) rồi git merge nhánh đó vào đây. Giao việc tránh để hai người sửa cùng file.' : '';
+    const workGit = git ? ` Bạn làm trong git worktree riêng, nhánh standlink/... của bạn: xong việc thì git commit vào nhánh đó (không push, không đổi nhánh), chỉ huy sẽ merge.` : '';
     return id === ws.orch
-      ? `[Standlink] Bạn là CHỈ HUY của một đội agent. Đội: ${roster}. Dùng MCP tool "standlink": board() xem đội và task, assign(member, task, brief) giao việc, ask(member, message) hỏi nhanh. Tiết kiệm token: chia việc nhỏ, brief ngắn, không tự làm phần đã giao. Khi worker xong bạn nhận tin "[Standlink] … xong". assign còn nhận skills[] để đính skill và effort (low cho việc vặt, high cho việc khó). Đội thiếu người cho việc này thì gọi spawn(provider, role, name) (provider: ${spawnable}): user được hỏi và chọn model/effort, bạn nhận tin khi user trả lời. Đừng thêm khi không cần.${roleLine}${skillLine}\n\n`
-      : `[Standlink] Bạn là "${ws.team.find(m => m.id === id)?.label}" (id ${id}) trong đội do ${lead} chỉ huy. Đội: ${roster}. Có MCP tool "standlink": board(), ask(member, message). Làm đúng việc được giao, kết thúc bằng 1–3 câu tóm tắt.${roleLine}${skillLine}\n\n`;
+      ? `[Standlink] Bạn là CHỈ HUY của một đội agent. Đội: ${roster}. Dùng MCP tool "standlink": board() xem đội và task, assign(member, task, brief) giao việc, ask(member, message) hỏi nhanh. Tiết kiệm token: chia việc nhỏ, brief ngắn, không tự làm phần đã giao. Khi worker xong bạn nhận tin "[Standlink] … xong". assign còn nhận skills[] để đính skill và effort (low cho việc vặt, high cho việc khó). Đội thiếu người cho việc này thì gọi spawn(provider, role, name) (provider: ${spawnable}): user được hỏi và chọn model/effort, bạn nhận tin khi user trả lời. Đừng thêm khi không cần.${leadGit}${roleLine}${skillLine}\n\n`
+      : `[Standlink] Bạn là "${ws.team.find(m => m.id === id)?.label}" (id ${id}) trong đội do ${lead} chỉ huy. Đội: ${roster}. Có MCP tool "standlink": board(), ask(member, message). Làm đúng việc được giao, kết thúc bằng 1–3 câu tóm tắt.${workGit}${roleLine}${skillLine}\n\n`;
   };
 
   const promptAgent = (sid: string, id: AgentId, text: string, opts: { quiet?: boolean } = {}) => {
@@ -271,7 +277,7 @@ export default function App() {
     const key = `${sid}/${id}`;
     const full = primed.current.has(key) ? text : preamble(sid, id) + text;
     primed.current.add(key);
-    bridge.prompt({ projectId: sid, memberId: id, cmd, cwd: pm.path, text: full, prefs: pm.prefs?.[id] });
+    bridge.prompt({ projectId: sid, memberId: id, cmd, cwd: pm.path, text: full, prefs: pm.prefs?.[id], isolate: isolated(sid, id) });
   };
 
   /** Agent-to-agent message: animate it, then deliver it as the receiver's next (queued) turn. */
@@ -305,6 +311,7 @@ export default function App() {
     const act = (a: Action) => dispatchAll({ sid, a });
     if (m.type === 'update') updateToEvents(id, m.update).forEach(act);
     else if (m.type === 'config') act({ t: 'config', agent: id, options: m.options });
+    else if (m.type === 'workspace') act({ t: 'workspace', agent: id, branch: m.branch });
     else if (m.type === 'auth') act({ t: 'auth', agent: id, text: `Cần đăng nhập: ${m.message.slice(0, 160)}`, methods: m.methods });
     else if (m.type === 'permission') {
       if (ws.access[id] === 'full') {
@@ -345,7 +352,7 @@ export default function App() {
     if (c.tool === 'board') {
       return reply(ws.team.map(m => {
         const ag = ws.agents[m.id], t = ag.task ? ws.tasks[ag.task] : undefined;
-        return `${m.id} | ${m.label}${m.role ? ` | ${m.role}` : ''}${m.id === ws.orch ? ' | chỉ huy' : ''} | ${STATE_LABEL[ag.state]}${t ? ` | ${t.id} ${t.done}/${t.total} ${t.status}: ${t.title}` : ''}`;
+        return `${m.id} | ${m.label}${m.role ? ` | ${m.role}` : ''}${m.id === ws.orch ? ' | chỉ huy' : ''} | ${STATE_LABEL[ag.state]}${ag.branch ? ` | nhánh ${ag.branch}` : ''}${t ? ` | ${t.id} ${t.done}/${t.total} ${t.status}: ${t.title}` : ''}`;
       }).join('\n') + (c.memberId === ws.orch ? `\nprovider để spawn: ${latest.current.providers.map(p => p.id).join(', ') || '(chưa có)'}` : ''));
     }
     if (c.tool === 'spawn') {
@@ -457,11 +464,17 @@ export default function App() {
   // Start every agent of the open project (no prompt, no tokens) so its model / effort pickers appear.
   useEffect(() => {
     if (!bridge || !meta.path) return;
+    let live = true;
+    bridge.canIsolate(meta.path).then(ok => { if (live) setGitOk(g => ({ ...g, [meta.id]: ok })); });
+    return () => { live = false; };
+  }, [meta.id, meta.path]);
+  useEffect(() => {
+    if (!bridge || !meta.path || gitOk[meta.id] === undefined) return; // wait: workers start inside their worktree
     for (const m of w.team) {
       const cmd = providers.find(p => p.id === m.provider)?.cmd;
-      if (cmd && !w.agents[m.id]?.config) bridge.start({ projectId: meta.id, memberId: m.id, cmd, cwd: meta.path, prefs: meta.prefs?.[m.id] });
+      if (cmd && !w.agents[m.id]?.config) bridge.start({ projectId: meta.id, memberId: m.id, cmd, cwd: meta.path, prefs: meta.prefs?.[m.id], isolate: isolated(meta.id, m.id) });
     }
-  }, [meta.id, meta.path, w.team.map(m => m.provider).join(), providers.length]);
+  }, [meta.id, meta.path, gitOk[meta.id], w.team.map(m => m.provider).join(), providers.length]);
 
   useEffect(() => {
     if (!bridge) return;

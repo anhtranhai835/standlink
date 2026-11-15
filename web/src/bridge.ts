@@ -8,7 +8,8 @@ export type AgentMsg =
   | { type: 'error'; message: string; rateLimit: boolean }
   | { type: 'exit'; code: number | null; stderr: string }
   | { type: 'config'; options: ConfigOption[] }
-  | { type: 'auth'; message: string; methods: AuthMethod[] };
+  | { type: 'auth'; message: string; methods: AuthMethod[] }
+  | { type: 'workspace'; branch: string; cwd: string };
 
 export interface AcpEventMsg { projectId: string; memberId: AgentId; msg: AgentMsg }
 
@@ -26,6 +27,8 @@ export interface StandlinkApi {
   permission(reqId: string, optionId: string | null): Promise<void>;
   stop(projectId: string, memberId: AgentId): Promise<void>;
   pickFolder(): Promise<string | null>;
+  /** True when the folder is a git repo with a commit, so workers can get their own worktree. */
+  canIsolate(dir: string): Promise<boolean>;
   /** Tell the app this window shows that project (its agents' events come here). */
   claimProject(projectId: string): Promise<void>;
   /** Focus the project's window, or open one: one window per project. */
@@ -39,7 +42,7 @@ export interface StandlinkApi {
   mcpReply(callId: string, text: string, isError?: boolean): Promise<void>;
 }
 
-export interface StartArgs { projectId: string; memberId: AgentId; cmd: string; cwd: string; prefs?: Record<string, string> }
+export interface StartArgs { projectId: string; memberId: AgentId; cmd: string; cwd: string; prefs?: Record<string, string>; isolate?: boolean }
 export interface SkillInfo { name: string; description: string; scope: 'project' | 'app'; file: string }
 
 export interface McpCall { callId: string; projectId: string; memberId: AgentId; tool: string; args: Record<string, unknown> }

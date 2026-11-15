@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { AcpAgent, AcpError, isAuthRequired, isRateLimit, type McpServerStdio, type PermissionOutcome } from './acp.ts';
 import { deleteSkill, listSkills, projectDir, readSkill, saveSkill } from './skills.ts';
+import { canIsolate, ensureWorktree } from './worktree.ts';
 
 const appSkillsDir = () => path.join(app.getPath('userData'), 'skills');
 
@@ -63,10 +64,11 @@ const teamTools = (projectId: string, memberId: string): McpServerStdio[] => bri
   ],
 }] : [];
 
-interface Slot { agent: AcpAgent; ready: Promise<void>; queue: Promise<unknown>; cmd: string; cwd: string }
+interface Slot { agent: AcpAgent; ready: Promise<void>; queue: Promise<unknown>; cmd: string; cwd: string; isolate: boolean }
 /** Saved choices for this member (model, reasoning effort…), keyed by ACP config option id. */
 type Prefs = Record<string, string>;
-interface StartArgs { projectId: string; memberId: string; cmd: string; cwd: string; prefs?: Prefs }
+/** isolate = run in this member's own git worktree (workers); the leader runs in the project folder itself. */
+interface StartArgs { projectId: string; memberId: string; cmd: string; cwd: string; prefs?: Prefs; isolate?: boolean }
 interface PromptArgs extends StartArgs { text: string }
 
 const slots = new Map<string, Slot>();
@@ -87,10 +89,10 @@ const errText = (err: unknown) =>
   err instanceof AcpError ? `${err.message}${err.data ? ` · ${String(typeof err.data === 'string' ? err.data : JSON.stringify(err.data)).slice(-600)}` : ''}` : String(err);
 
 /** Reuse the running agent for this member, or start a new one (new command or folder = new process). */
-function slotFor({ projectId, memberId, cmd, cwd, prefs = {} }: StartArgs): Slot {
+function slotFor({ projectId, memberId, cmd, cwd, prefs = {}, isolate = false }: StartArgs): Slot {
   const key = `${projectId}/${memberId}`;
   const old = slots.get(key);
-  if (old && old.cmd === cmd && old.cwd === cwd) return old;
+  if (old && old.cmd === cmd && old.cwd === cwd && old.isolate === isolate) return old;
   old?.agent.kill();
 
   const agent = new AcpAgent({
@@ -105,10 +107,14 @@ function slotFor({ projectId, memberId, cmd, cwd, prefs = {} }: StartArgs): Slot
       emit(projectId, memberId, { type: 'exit', code, stderr: stderr.slice(-1500) });
     },
   });
-  agent.start(cmd, cwd);
+  const slot: Slot = { agent, ready: Promise.resolve(), queue: Promise.resolve(), cmd, cwd, isolate };
   const ready = (async () => {
+    const ws = isolate ? await ensureWorktree(cwd, memberId) : { cwd };
+    if (slots.get(key) !== slot) throw new Error('Agent đã bị dừng.'); // stopped while the worktree was being made
+    agent.start(cmd, ws.cwd);
+    if (ws.branch) emit(projectId, memberId, { type: 'workspace', branch: ws.branch, cwd: ws.cwd });
     await agent.initialize();
-    await agent.newSession(cwd, teamTools(projectId, memberId));
+    await agent.newSession(ws.cwd, teamTools(projectId, memberId));
     // re-apply the member's saved model / effort; skip anything this agent does not offer
     for (const [configId, value] of Object.entries(prefs)) {
       const opt = agent.configOptions.find(o => o.id === configId);
@@ -117,7 +123,7 @@ function slotFor({ projectId, memberId, cmd, cwd, prefs = {} }: StartArgs): Slot
     emit(projectId, memberId, { type: 'config', options: agent.configOptions });
   })();
   ready.catch(() => { if (slots.get(key)?.agent === agent) { slots.delete(key); agent.kill(); } });
-  const slot: Slot = { agent, ready, queue: Promise.resolve(), cmd, cwd };
+  slot.ready = ready;
   slots.set(key, slot);
   return slot;
 }
@@ -144,6 +150,9 @@ ipcMain.handle('acp:config', async (_e, a: { projectId: string; memberId: string
     emit(a.projectId, a.memberId, { type: 'error', message: `Không đổi được ${a.configId}: ${errText(err)}`, rateLimit: false });
   }
 });
+
+/** Whether this folder can give each worker its own git worktree (a git repo with a commit). */
+ipcMain.handle('git:can-isolate', (_e, dir: string) => (dir ? canIsolate(dir) : false));
 
 ipcMain.handle('skills:list', (_e, cwd?: string) => listSkills(appSkillsDir(), cwd || undefined));
 ipcMain.handle('skills:save', (_e, a: { name: string; description: string; body: string; cwd?: string }) =>
