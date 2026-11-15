@@ -1,0 +1,639 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Standlink Stand Roster</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=Pixelify+Sans:wght@500;700&family=Be+Vietnam+Pro:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #1b1029;
+    --bg2: #2a1640;
+    --ink: #f7ecd4;
+    --mute: #bba9d1;
+    --gold: #ffcf3f;
+    --mag: #ff3d8b;
+    --black: #0b0612;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    background-color: var(--bg);
+    background-image:
+      radial-gradient(rgba(255,255,255,.07) 1px, transparent 1.6px),
+      linear-gradient(160deg, var(--bg2), var(--bg) 60%);
+    background-size: 6px 6px, 100% 100%;
+    color: var(--ink);
+    font: 400 16px/1.55 "Be Vietnam Pro", system-ui, sans-serif;
+  }
+  main { max-width: 1180px; margin: 0 auto; padding: 40px 16px 72px; }
+
+  header { display: grid; gap: 6px; margin-bottom: 28px; }
+  .kicker { font: 700 14px "Pixelify Sans", monospace; letter-spacing: .12em; color: var(--mag); }
+  h1 {
+    margin: 0;
+    font: 400 clamp(48px, 9vw, 104px)/.95 "Dela Gothic One", sans-serif;
+    color: var(--gold);
+    transform: skewX(-8deg);
+    transform-origin: left;
+    text-shadow: 5px 5px 0 var(--mag), 10px 10px 0 var(--black);
+  }
+  .lede { max-width: 60ch; color: var(--mute); margin: 10px 0 0; }
+
+  /* ---------- battle scene: the signature panel ---------- */
+  .scene-wrap {
+    position: relative;
+    border: 4px solid var(--black);
+    box-shadow: 10px 10px 0 var(--black);
+    transform: rotate(-.6deg);
+    overflow: hidden;
+    transition: filter .25s steps(3);
+  }
+  .scene-wrap.tstop { filter: invert(1) hue-rotate(180deg) contrast(1.25); }
+  .scene-wrap.tbc { filter: sepia(.9) contrast(1.1) brightness(.85); }
+  .scene-wrap canvas { display: block; width: 100%; aspect-ratio: 200 / 84; image-rendering: pixelated; }
+  .hud { position: absolute; inset: 0; pointer-events: none; font: 700 clamp(10px, 1.4vw, 14px) "Pixelify Sans", monospace; }
+  .bars { position: absolute; left: 2%; top: 4%; display: grid; gap: 6px; width: min(34%, 260px); }
+  .bar { display: grid; grid-template-columns: 7.5em 1fr 3em; align-items: center; gap: 6px; text-shadow: 2px 2px 0 var(--black); }
+  .bar i { height: 10px; background: var(--black); border: 2px solid var(--black); display: block; }
+  .bar b { display: block; height: 100%; background: var(--c); transition: width .1s steps(2); }
+  .task { position: absolute; right: 2%; top: 4%; width: min(34%, 260px); text-shadow: 2px 2px 0 var(--black); text-align: right; }
+  .task i { display: block; height: 10px; margin-top: 4px; background: var(--black); border: 2px solid var(--black); }
+  .task b { display: block; height: 100%; width: 0; background: var(--gold); }
+  .caption {
+    position: absolute; left: 50%; bottom: 3%; transform: translateX(-50%);
+    width: max-content; max-width: 92%;
+    background: var(--black); color: var(--ink);
+    padding: 8px 14px; border: 2px solid var(--gold);
+    font: 600 clamp(11px, 1.5vw, 15px) "Be Vietnam Pro", sans-serif;
+  }
+  .bigtext {
+    position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%) skewX(-10deg);
+    font: 400 clamp(28px, 6vw, 64px) "Dela Gothic One", sans-serif; color: var(--ink);
+    text-shadow: 4px 4px 0 var(--mag), 8px 8px 0 var(--black); opacity: 0;
+  }
+  .bigtext.on { opacity: 1; }
+  .tbc-arrow {
+    position: absolute; left: 2%; bottom: 16%;
+    padding: 8px 26px 8px 38px;
+    background: #f1dfae; color: #3b2a12;
+    font: 400 clamp(14px, 2.4vw, 24px) "Dela Gothic One", sans-serif; letter-spacing: .02em;
+    clip-path: polygon(0 50%, 26px 0, 100% 0, 100% 100%, 26px 100%);
+    transform: translateX(-130%); transition: transform .35s cubic-bezier(.2,1.4,.4,1);
+  }
+  .tbc-arrow.on { transform: translateX(0); }
+  .scene-sfx {
+    position: absolute; font: 400 clamp(18px, 3.4vw, 36px) "Dela Gothic One", sans-serif;
+    color: var(--gold); text-shadow: 3px 3px 0 var(--black);
+    animation: shiver .12s steps(2) infinite;
+  }
+
+  /* ---------- roster ---------- */
+  h2.section { font: 400 clamp(26px, 4vw, 40px) "Dela Gothic One", sans-serif; margin: 64px 0 6px; transform: skewX(-6deg); }
+  .section-sub { color: var(--mute); margin: 0 0 26px; }
+  .roster { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 30px; }
+  .card {
+    display: grid; grid-template-columns: minmax(0, 46%) minmax(0, 1fr);
+    background: linear-gradient(135deg, color-mix(in srgb, var(--c) 22%, var(--bg)) 0, var(--bg) 70%);
+    border: 3px solid var(--black);
+    box-shadow: 7px 7px 0 var(--black);
+  }
+  .stage {
+    position: relative;
+    background:
+      repeating-conic-gradient(from 0deg at 50% 62%, rgba(255,255,255,.07) 0 5deg, transparent 5deg 10deg),
+      radial-gradient(circle at 50% 62%, color-mix(in srgb, var(--c) 55%, transparent) 0, transparent 68%);
+    border-right: 3px solid var(--black);
+    display: grid; place-items: center;
+    min-height: 240px;
+  }
+  .stage canvas { width: 100%; max-width: 288px; aspect-ratio: 1; image-rendering: pixelated; display: block; }
+  .sfx {
+    position: absolute; top: 10px; right: 10px;
+    font: 400 22px "Dela Gothic One", sans-serif; color: var(--c);
+    text-shadow: 2px 2px 0 var(--black); writing-mode: vertical-rl;
+    animation: menace 1.2s ease-in-out infinite;
+  }
+  .info { padding: 18px 18px 16px; display: grid; gap: 8px; align-content: start; }
+  .eyebrow { font: 700 13px "Pixelify Sans", monospace; letter-spacing: .1em; color: var(--c); margin: 0; }
+  .card h3 { margin: 0; font: 400 clamp(22px, 2.6vw, 28px)/1.1 "Dela Gothic One", sans-serif; }
+  .role { margin: 0; color: var(--mute); font-size: 15px; }
+  .moves { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .moves button {
+    font: 700 14px "Pixelify Sans", monospace; letter-spacing: .05em;
+    background: var(--black); color: var(--ink);
+    border: 2px solid var(--c); padding: 8px 12px; cursor: pointer;
+  }
+  .moves button:hover { background: color-mix(in srgb, var(--c) 30%, var(--black)); }
+  .moves button[aria-pressed="true"] { background: var(--c); color: var(--black); }
+  .moves button.sig { border-style: dashed; }
+  .moves button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+  .movedesc { margin: 2px 0 0; font-size: 15px; min-height: 3.1em; }
+  .hex { width: 150px; justify-self: end; margin-top: -6px; }
+  .hex text { font: 700 7px "Pixelify Sans", monospace; fill: var(--mute); }
+  .hex .g { fill: var(--ink); }
+
+  footer { margin-top: 56px; color: var(--mute); font-size: 14px; }
+
+  @keyframes menace { 0%,100% { transform: translateY(0) scale(1); opacity: .85; } 50% { transform: translateY(-6px) scale(1.06); opacity: 1; } }
+  @keyframes shiver { from { transform: translate(0,0); } to { transform: translate(2px,-1px); } }
+
+  @media (max-width: 860px) {
+    .roster { grid-template-columns: 1fr; }
+    .bars, .task { width: 44%; }
+  }
+  @media (max-width: 520px) {
+    .card { grid-template-columns: 1fr; }
+    .stage { border-right: 0; border-bottom: 3px solid var(--black); }
+    .hex { justify-self: center; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sfx, .scene-sfx { animation: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <span class="kicker">STANDLINK · BẢN DUYỆT ART</span>
+    <h1>STANDLINK</h1>
+    <p class="lede">Mỗi agent là một Stand. Claude chỉ huy, các Stand khác ra đòn. Khi một Stand hết quota, nó ghi checkpoint và Stand khác làm tiếp từ đúng bước đó.</p>
+  </header>
+
+  <section class="scene-wrap" id="scene" aria-label="Cảnh minh hoạ bàn giao task khi hết quota">
+    <canvas width="200" height="84"></canvas>
+    <div class="hud">
+      <div class="bars">
+        <div class="bar" style="--c:#3ff2c2"><span>CODEX</span><i><b id="qCodex"></b></i><span id="qCodexN"></span></div>
+        <div class="bar" style="--c:#e07a55"><span>CLAUDE</span><i><b id="qClaude"></b></i><span id="qClaudeN"></span></div>
+      </div>
+      <div class="task"><span id="taskLabel">BUG #142 · auth refresh</span><i><b id="taskBar"></b></i></div>
+      <div class="bigtext" id="bigtext">TIME STOP</div>
+      <div class="tbc-arrow" id="tbc">TO BE CONTINUED</div>
+      <span class="scene-sfx" id="sceneSfx"></span>
+      <div class="caption" id="caption"></div>
+    </div>
+  </section>
+
+  <h2 class="section">STAND ROSTER</h2>
+  <p class="section-sub">Bấm từng chiêu để xem animation. Mỗi chiêu ứng với một trạng thái thật của agent trong app.</p>
+  <div class="roster" id="roster"></div>
+
+  <footer>Bản nháp art. Duyệt xong mới dựng UI thật. Chỉ số trên hình lục giác là cho vui, chưa đo.</footer>
+</main>
+
+<script>
+/* ===== pixel helpers (all coords in sprite pixels) ===== */
+const W = 64, H = 72;
+const rad = a => a * Math.PI / 180;
+// angle 0 = straight down, 90 = forward (right), 180 = up
+const dir = a => [Math.sin(rad(a)), Math.cos(rad(a))];
+function R(c, x, y, w, h, col) { c.fillStyle = col; c.fillRect(Math.round(x), Math.round(y), w, h); }
+function P(c, x, y, col) { R(c, x, y, 1, 1, col); }
+function seg(c, x0, y0, x1, y1, w, col) {
+  c.fillStyle = col;
+  const n = Math.ceil(Math.hypot(x1 - x0, y1 - y0) * 2) + 1, o = Math.floor(w / 2);
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    c.fillRect(Math.round(x0 + (x1 - x0) * t) - o, Math.round(y0 + (y1 - y0) * t) - o, w, w);
+  }
+}
+function disc(c, cx, cy, r, col) {
+  c.fillStyle = col;
+  for (let y = -r; y <= r; y++) for (let x = -r; x <= r; x++)
+    if (x * x + y * y <= r * r + r * .6) c.fillRect(Math.round(cx) + x, Math.round(cy) + y, 1, 1);
+}
+function rng(s) { s = (s * 9301 + 49297) % 233280 || 1; return () => (s = (s * 9301 + 49297) % 233280) / 233280; }
+// 1px dark outline around every opaque pixel: the thing that makes it read as pixel art
+function outline(c, col, w = W, h = H) {
+  const d = c.getImageData(0, 0, w, h).data, m = [];
+  const on = (x, y) => x >= 0 && y >= 0 && x < w && y < h && d[(y * w + x) * 4 + 3];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++)
+    if (!d[(y * w + x) * 4 + 3] && (on(x - 1, y) || on(x + 1, y) || on(x, y - 1) || on(x, y + 1))) m.push(x, y);
+  c.fillStyle = col;
+  for (let k = 0; k < m.length; k += 2) c.fillRect(m[k], m[k + 1], 1, 1);
+}
+function makeOff(w = W, h = H) {
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  return cv.getContext('2d', { willReadFrequently: true });
+}
+
+/* ===== skeleton + poses ===== */
+function skel(p) {
+  const L = rad(p.lean);
+  const hip = { x: 28, y: 46 + p.y };
+  const neck = { x: hip.x + Math.sin(L) * 18, y: hip.y - Math.cos(L) * 18 };
+  const hd = p.hd || [0, 0];
+  const head = { x: neck.x + Math.sin(L) * 6 + hd[0], y: neck.y - Math.cos(L) * 6 - 1 + hd[1] };
+  return { hip, neck, head, sF: { x: neck.x + 3, y: neck.y + 2 }, sB: { x: neck.x - 3, y: neck.y + 2 } };
+}
+// arm/leg = [upper angle, joint bend relative to upper]
+const POSES = {
+  idle: t => ({ y: Math.round(Math.sin(t * 3)), lean: -4, aF: [120, 100], aB: [-20, 10], lF: [18, -14], lB: [-14, 4] }),
+  rush: (t, fps = 14) => {
+    const f = Math.floor(t * fps), a = f % 2, j = ((f * 7) % 5 - 2) * 5;
+    const ext = [90 + j, -j * .5], ret = [45, 115];
+    return { y: a ? 0 : 1, lean: 14, aF: a ? ext : ret, aB: a ? ret : ext, lF: [42, -32], lB: [-34, 8], fists: f };
+  },
+  pose: t => ({ y: 0, lean: -10, aF: [200, -60], aB: [-60, 90], lF: [24, -34], lB: [-6, 8], hd: [-1, 0] }),
+  ko: () => ({ y: 6, lean: 28, aF: [22, -8], aB: [6, 0], lF: [80, -80], lB: [8, -98], hd: [1, 2] }),
+  kick: t => {
+    const hi = Math.floor(t * 8) % 4 < 2;
+    return { y: 0, lean: -14, aF: [150, 70], aB: [100, 110], lF: hi ? [105, -5] : [70, -50], lB: [-10, -10] };
+  },
+};
+function poseFor(move, t) {
+  if (move === 'rush') return POSES.rush(t);
+  if (move === 'barrage') return POSES.rush(t, 22);
+  if (move === 'rewind' || move === 'blink') return POSES.idle(t);
+  return POSES[move](t);
+}
+
+/* ===== body parts ===== */
+function limb(c, x, y, a1, a2, l1, l2, w, col, hi) {
+  const [dx, dy] = dir(a1), ex = x + dx * l1, ey = y + dy * l1;
+  const [fx, fy] = dir(a1 + a2), hx = ex + fx * l2, hy = ey + fy * l2;
+  seg(c, x, y, ex, ey, w, col);
+  seg(c, ex, ey, hx, hy, Math.max(2, w - 1), col);
+  if (hi) seg(c, x - .5, y - .5, ex - .5, ey - .5, 1, hi);
+  return { ex, ey, hx, hy };
+}
+function fist(c, l, pal, back) {
+  R(c, l.hx - 2, l.hy - 2, 4, 4, back ? pal.d : pal.a);
+  if (!back) P(c, l.hx - 2, l.hy - 2, '#fff');
+}
+function foot(c, l, pal, st, back) {
+  if (st.float) { seg(c, l.hx, l.hy, l.hx + 1, l.hy + 3, 2, back ? pal.d : pal.b); return; }
+  R(c, l.hx - 2, l.hy - 1, 6, 3, back ? pal.o : pal.d);
+  P(c, l.hx + 3, l.hy - 1, pal.a);
+}
+function torso(c, sk, pal, st) {
+  const { neck, hip } = sk, n = Math.round(hip.y - neck.y), wt = st.wt || 12, wb = st.wb || 8;
+  const sb = st.suit?.b || pal.b, sl = st.suit?.l || pal.l;
+  R(c, neck.x - 2, neck.y - 3, 4, 4, pal.d);
+  for (let i = 0; i <= n; i++) {
+    const k = i / n, cx = neck.x + (hip.x - neck.x) * k, w = Math.round(wt + (wb - wt) * k);
+    const x0 = Math.round(cx - w / 2), y = Math.round(neck.y) + i;
+    R(c, x0, y, w, 1, sb); R(c, x0 + w - 3, y, 2, 1, sl); P(c, x0, y, pal.d);
+    if (st.suit && i % 4 === 2) P(c, x0 + Math.round(w / 2), y, pal.a); // coat buttons
+  }
+  const hx = Math.round(hip.x), hy = Math.round(hip.y);
+  R(c, hx - wb / 2, hy - 2, wb, 2, pal.d); P(c, hx, hy - 2, pal.a);
+  R(c, hx - 5, hy, 10, 3, pal.d);
+}
+function barrage(c, sk, f, pal, n) {
+  const r = rng(f + 1);
+  for (let k = 0; k < n; k++) {
+    const x = 40 + r() * 18, y = sk.neck.y - 3 + r() * 15;
+    seg(c, x - 9, y + 1, x - 1, y + 1, 3, k % 2 ? pal.b : pal.d);
+    R(c, x - 1, y - 1, 4, 4, pal.a); P(c, x - 1, y - 1, '#fff');
+  }
+}
+const chest = sk => ({ x: Math.round(sk.neck.x + (sk.hip.x - sk.neck.x) * .35), y: Math.round(sk.neck.y + 7) });
+function ring(c, sk, t, pal, front) {
+  const cx = sk.hip.x, cy = sk.hip.y - 4;
+  for (let i = 0; i < 90; i++) {
+    const a = i / 90 * Math.PI * 2 + t * 2, s = Math.sin(a);
+    if ((s > 0) !== front) continue;
+    P(c, cx + Math.cos(a) * 12, cy + s * 3, i % 22 === 0 ? '#fff' : pal.a);
+  }
+}
+
+/* ===== the four Stands (original designs) ===== */
+const STANDS = {
+  claude: {
+    name: 'THE CONDUCTOR', provider: 'Claude Code', color: '#e07a55', sig: ['rewind', 'REWIND'],
+    role: 'Nhạc trưởng. Chia task, giao việc, đọc checkpoint của Stand khác để làm tiếp.',
+    pal: { o: '#2a0d08', d: '#a8452a', b: '#e07a55', l: '#ffc29b', a: '#ffd75e', e: '#fffbe6' },
+    stats: { POW: 'A', SPD: 'B', RNG: 'A', STA: 'C', PRC: 'A', POT: 'A' },
+    suit: { b: '#5a2478', l: '#8f52b0' },
+    head(c, x, y, t, pal) {
+      [-70, -35, 0, 35, 70].forEach((a, i) => {
+        const [dx, dy] = dir(180 + a), L = i === 2 ? 11 : 9;
+        seg(c, x, y, x + dx * L, y + dy * L, 2, pal.a);
+      });
+      disc(c, x, y, 6, pal.b); disc(c, x - 2, y - 2, 2, pal.l);
+      R(c, x - 1, y - 1, 8, 3, '#2a0f2e'); R(c, x + 2, y, 4, 1, pal.e); P(c, x + 6, y, pal.a);
+      R(c, x + 1, y + 3, 4, 1, pal.d);
+    },
+    behind(c, sk, p, t) { // cape
+      const n = sk.neck;
+      for (let i = 0; i < 30; i++) {
+        const w = Math.round(6 + i * .3), cx = n.x - 4 - i * .25 + Math.sin(t * 6 + i * .35) * 1.3;
+        R(c, cx - w / 2, n.y + 1 + i, w, 1, i > 27 ? '#ffd75e' : '#4b1d66');
+        P(c, cx - w / 2, n.y + 1 + i, '#2d0f40');
+      }
+    },
+    armor(c, sk, p, t, pal) {
+      const { x, y } = chest(sk);
+      P(c, x, y, pal.a); P(c, x - 1, y, pal.a); P(c, x + 1, y, pal.a); P(c, x, y - 1, pal.a); P(c, x, y + 1, pal.a);
+    },
+    front(c, sk, p, t, pal, af) { // conductor's baton
+      if (p.fists !== undefined) return;
+      const [dx, dy] = dir(150);
+      seg(c, af.hx, af.hy, af.hx + dx * 9, af.hy + dy * 9, 1, pal.a);
+      P(c, af.hx + dx * 9, af.hy + dy * 9, '#fff');
+    },
+  },
+  codex: {
+    name: 'OBSIDIAN CIPHER', provider: 'Codex CLI', color: '#3ff2c2', sig: ['barrage', 'BARRAGE'],
+    role: 'Cỗ máy viết code. Đấm nhanh, chịu đòn tốt, hợp task dài nhiều file.',
+    pal: { o: '#05080a', d: '#1d2a30', b: '#3d525b', l: '#7d9ba5', a: '#3ff2c2', e: '#d9fff3' },
+    stats: { POW: 'A', SPD: 'A', RNG: 'B', STA: 'B', PRC: 'B', POT: 'B' },
+    wt: 14, wb: 9,
+    head(c, x, y, t, pal) {
+      seg(c, x - 3, y - 5, x - 6, y - 11, 2, pal.d); seg(c, x + 2, y - 5, x + 3, y - 11, 2, pal.d);
+      R(c, x - 5, y - 5, 11, 11, pal.b); R(c, x - 5, y - 5, 11, 2, pal.l);
+      R(c, x - 5, y + 5, 11, 1, pal.d); R(c, x - 5, y - 3, 1, 8, pal.d);
+      R(c, x - 1, y - 1, 7, 2, pal.a); R(c, x + 2, y + 1, 2, 3, pal.a); R(c, x + 3, y - 1, 3, 1, pal.e);
+    },
+    armor(c, sk, p, t, pal) {
+      const s = sk.sF, b = sk.sB;
+      R(c, b.x - 4, b.y - 3, 6, 4, pal.d);
+      R(c, s.x - 2, s.y - 3, 7, 5, pal.b); R(c, s.x - 2, s.y - 3, 7, 1, pal.l); P(c, s.x + 4, s.y - 1, pal.a);
+      const { x, y } = chest(sk);
+      [[-2, 0], [-3, 1], [-2, 2], [2, 0], [3, 1], [2, 2]].forEach(([dx, dy]) => P(c, x + dx, y + dy, pal.a));
+    },
+  },
+  cursor: {
+    name: 'CARET BLADE', provider: 'Cursor Agent', color: '#ff4fa3', sig: ['blink', 'BLINK'],
+    role: 'Sát thủ sửa nhanh. Nhảy giữa các file, vá đúng chỗ rồi rút.',
+    pal: { o: '#0b0716', d: '#4b3f6e', b: '#9a8fc4', l: '#e2dcff', a: '#ff4fa3', e: '#ffffff' },
+    stats: { POW: 'C', SPD: 'A', RNG: 'C', STA: 'B', PRC: 'A', POT: 'B' },
+    wt: 10, wb: 7,
+    head(c, x, y, t, pal) { // mouse-pointer shaped helmet
+      const tx = x - 4, ty = y - 7;
+      for (let i = 0; i < 12; i++) {
+        const w = i < 9 ? i + 2 : 3, off = i < 9 ? 0 : 3 + (i - 9);
+        R(c, tx + off, ty + i, w, 1, pal.b); P(c, tx + off, ty + i, pal.l);
+      }
+      R(c, x - 1, y - 1, 3, 1, pal.a); P(c, x + 2, y - 1, '#fff');
+    },
+    armor(c, sk, p, t, pal) {
+      const { x, y } = chest(sk);
+      if (Math.floor(t * 2.5) % 2) R(c, x, y - 2, 1, 7, pal.a);
+    },
+  },
+  antigravity: {
+    name: 'ZERO GRAVITY', provider: 'Antigravity', color: '#5aa2ff', sig: ['kick', 'FLOAT KICK'],
+    role: 'Lơ lửng, bền bỉ. Ôm task chạy nền lâu mà không cần trông.',
+    pal: { o: '#03122b', d: '#1f4fa8', b: '#4a93ff', l: '#b4dbff', a: '#ffe14f', e: '#ffffff' },
+    stats: { POW: 'B', SPD: 'B', RNG: 'A', STA: 'A', PRC: 'C', POT: 'A' },
+    wt: 11, wb: 7, float: true,
+    head(c, x, y, t, pal) {
+      for (let k = 0; k < 5; k++) {
+        const bx = x - 4 + k * 2;
+        for (let j = 0; j < 10; j++) {
+          const xx = bx + Math.sin(t * 5 + j * .55 + k) * 2.8 * (j / 10);
+          P(c, xx, y - 4 - j, j < 5 ? pal.b : pal.l);
+          if (j < 4) P(c, xx + 1, y - 4 - j, pal.b);
+        }
+      }
+      disc(c, x, y, 5, pal.b); disc(c, x - 2, y - 2, 1, pal.l);
+      R(c, x, y - 1, 6, 3, '#0a1d4a'); R(c, x + 2, y, 3, 1, pal.a);
+    },
+    behind(c, sk, p, t, pal) { ring(c, sk, t, pal, false); },
+    front(c, sk, p, t, pal) { ring(c, sk, t, pal, true); },
+  },
+};
+
+function drawStand(c, st, move, t) {
+  c.clearRect(0, 0, W, H);
+  const pal = st.pal, p = poseFor(move, t);
+  if (st.float && move !== 'ko') p.y += Math.round(Math.sin(t * 2.2) * 2) - 3;
+  const sk = skel(p), lw = st.float ? 4 : 5;
+  st.behind?.(c, sk, p, t, pal);
+  const lb = limb(c, sk.hip.x - 2, sk.hip.y + 2, p.lB[0], p.lB[1], 11, 11, lw, pal.d); foot(c, lb, pal, st, true);
+  const ab = limb(c, sk.sB.x, sk.sB.y, p.aB[0], p.aB[1], 9, 9, 4, pal.d); fist(c, ab, pal, true);
+  torso(c, sk, pal, st);
+  const lf = limb(c, sk.hip.x + 2, sk.hip.y + 2, p.lF[0], p.lF[1], 11, 11, lw, pal.b, pal.l); foot(c, lf, pal, st, false);
+  st.armor?.(c, sk, p, t, pal);
+  st.head(c, sk.head.x, sk.head.y, t, pal, p);
+  const af = limb(c, sk.sF.x, sk.sF.y, p.aF[0], p.aF[1], 9, 9, 4, pal.b, pal.l); fist(c, af, pal, false);
+  if (p.fists !== undefined) barrage(c, sk, p.fists, pal, move === 'barrage' ? 12 : 7);
+  st.front?.(c, sk, p, t, pal, af);
+  outline(c, pal.o);
+}
+
+function shadow(ctx, cx, y, w) {
+  ctx.fillStyle = 'rgba(0,0,0,.35)';
+  ctx.fillRect(Math.round(cx - w), y, w * 2, 2);
+  ctx.fillRect(Math.round(cx - w * .6), y - 1, Math.round(w * 1.2), 1);
+}
+function speedLines(ctx, t, w, h) {
+  const r = rng(Math.floor(t * 12) + 7);
+  ctx.fillStyle = 'rgba(255,255,255,.55)';
+  for (let i = 0; i < 7; i++) ctx.fillRect(r() * w | 0, 8 + r() * (h - 24) | 0, 4 + (r() * 10 | 0), 1);
+}
+
+/* ===== roster cards ===== */
+const MOVE_INFO = {
+  idle: ['ゴゴゴゴ', 'Chờ việc. Agent rảnh, chờ nhạc trưởng giao task.'],
+  rush: ['ドドドドド', 'Đang code. Mỗi cú đấm là một bước trong task.'],
+  ko: ['QUOTA 0%', 'Hết quota. Chạm rate limit, đứng hình và ghi checkpoint.'],
+  pose: ['ドォーン', 'Xong task, chờ review.'],
+  rewind: ['◀◀ REWIND', 'Đọc checkpoint của Stand khác rồi làm tiếp, không replay transcript.'],
+  barrage: ['ドドドドドドド', 'Chạy nhiều file cùng lúc.'],
+  blink: ['シュン', 'Sửa nhanh, nhảy qua lại giữa các file.'],
+  kick: ['ズバッ', 'Task dài chạy nền, không cần trông.'],
+};
+const DEFAULT_MOVE = { claude: 'rewind', codex: 'rush', cursor: 'blink', antigravity: 'kick' };
+const CW = 72, CH = 72;
+
+function hex(stats, col) {
+  const keys = Object.keys(stats), v = { A: 5, B: 4, C: 3, D: 2, E: 1 }, cx = 60, cy = 60, Rr = 38;
+  const pt = (i, r) => { const a = -Math.PI / 2 + i * Math.PI / 3; return [cx + Math.cos(a) * r, cy + Math.sin(a) * r].map(n => n.toFixed(1)); };
+  const poly = f => keys.map((k, i) => pt(i, f(k)).join(',')).join(' ');
+  let s = '<svg viewBox="0 0 120 120" class="hex" role="img" aria-label="Chỉ số Stand">';
+  for (let g = 1; g <= 5; g++) s += `<polygon points="${poly(() => Rr * g / 5)}" fill="none" stroke="rgba(255,255,255,.13)"/>`;
+  s += `<polygon points="${poly(k => Rr * v[stats[k]] / 5)}" fill="${col}" fill-opacity=".5" stroke="${col}" stroke-width="2"/>`;
+  keys.forEach((k, i) => { const [x, y] = pt(i, Rr + 13); s += `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="middle">${k}<tspan class="g"> ${stats[k]}</tspan></text>`; });
+  return s + '</svg>';
+}
+
+const cards = Object.entries(STANDS).map(([id, st]) => {
+  const moves = [['idle', 'IDLE'], ['rush', 'RUSH'], ['ko', 'TIME STOP'], ['pose', 'POSE'], st.sig];
+  const el = document.createElement('article');
+  el.className = 'card';
+  el.style.setProperty('--c', st.color);
+  el.innerHTML = `
+    <div class="stage"><canvas width="${CW}" height="${CH}"></canvas><span class="sfx" aria-hidden="true"></span></div>
+    <div class="info">
+      <p class="eyebrow">STAND · ${st.provider}</p>
+      <h3>「${st.name}」</h3>
+      <p class="role">${st.role}</p>
+      <div class="moves">${moves.map(([m, label]) => `<button type="button" data-m="${m}" class="${m === st.sig[0] ? 'sig' : ''}">${label}</button>`).join('')}</div>
+      <p class="movedesc"></p>
+      ${hex(st.stats, st.color)}
+    </div>`;
+  document.getElementById('roster').append(el);
+  const card = { st, el, ctx: el.querySelector('canvas').getContext('2d'), off: makeOff(), move: '', t0: 0, last: -1 };
+  const setMove = m => {
+    card.move = m; card.t0 = performance.now() / 1000; card.last = -1;
+    el.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b.dataset.m === m));
+    el.querySelector('.sfx').textContent = MOVE_INFO[m][0];
+    el.querySelector('.movedesc').textContent = MOVE_INFO[m][1];
+  };
+  el.querySelector('.moves').addEventListener('click', e => { const m = e.target.closest('button')?.dataset.m; if (m) setMove(m); });
+  setMove(DEFAULT_MOVE[id]);
+  return card;
+});
+
+function drawCard(card, now) {
+  const lt = now - card.t0, f = Math.floor(lt * 12);
+  if (f === card.last) return; // pixel art runs at 12fps
+  card.last = f;
+  const q = f / 12, { ctx, off, st, move } = card;
+  drawStand(off, st, move, q);
+  ctx.clearRect(0, 0, CW, CH);
+  shadow(ctx, 36, 70, st.float ? 8 : 12);
+  let ox = 4;
+  if (move === 'blink') {
+    const j = Math.floor(lt * 3.3) % 3; ox = [4, -6, 12][j];
+    ctx.globalAlpha = .3; ctx.filter = 'hue-rotate(300deg)';
+    ctx.drawImage(off.canvas, [12, 4, -6][j], 0);
+    ctx.globalAlpha = 1; ctx.filter = 'none';
+  }
+  if (move === 'rewind') {
+    ctx.filter = 'hue-rotate(160deg) saturate(1.6)';
+    for (let k = 3; k >= 1; k--) { ctx.globalAlpha = .11 * (4 - k); ctx.drawImage(off.canvas, 4 + k * 5, 0); }
+    ctx.globalAlpha = 1; ctx.filter = 'none';
+  }
+  ctx.filter = move === 'ko' ? 'grayscale(1) brightness(.7)' : 'none';
+  ctx.drawImage(off.canvas, ox, 0);
+  ctx.filter = 'none';
+  if (move === 'rush' || move === 'barrage' || move === 'kick') speedLines(ctx, q, CW, CH);
+}
+
+/* ===== battle scene: Codex runs out of quota, Claude picks up the checkpoint ===== */
+const SW = 200, SH = 84, GROUND = 77, LOOP = 16;
+const sc = document.querySelector('#scene canvas').getContext('2d');
+sc.imageSmoothingEnabled = false;
+const bg = (() => {
+  const img = sc.createImageData(SW, SH), d = img.data;
+  for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++) {
+    let c;
+    if (y === GROUND) c = [255, 207, 63];
+    else if (y > GROUND) c = (Math.floor(x / 4) + Math.floor(y / 4)) % 2 ? [28, 15, 46] : [36, 19, 57];
+    else {
+      const a = Math.atan2(y - 38, x - 132);
+      c = Math.floor((a + Math.PI) / (Math.PI / 14)) % 2 ? [60, 25, 90] : [43, 17, 68];
+      if (x % 4 === 0 && y % 4 === 0 && y > 54) c = c.map(v => v + 22);
+    }
+    const i = (y * SW + x) * 4; d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; d[i + 3] = 255;
+  }
+  return img;
+})();
+const BUG = [
+  '..o........o..',
+  '...o......o...',
+  '....######....',
+  '..##hhhhhh##..',
+  '.#hyyhhhhyyh#.',
+  '.#hyKhhhhyKh#.',
+  'o############o',
+  '.o##########o.',
+  'o.##########.o',
+  '..##########..',
+  '...########...',
+  '..o..o..o..o..',
+];
+const BUGC = { '#': '#c23a3a', h: '#ff7a6b', y: '#ffe14f', K: '#1a0710', o: '#5a1420' };
+const bugOff = (() => {
+  const c = makeOff(16, 14);
+  BUG.forEach((row, y) => [...row].forEach((ch, x) => { if (BUGC[ch]) P(c, x + 1, y + 1, BUGC[ch]); }));
+  outline(c, '#1a0408', 16, 14);
+  return c.canvas;
+})();
+const offCodex = makeOff(), offClaude = makeOff();
+const $ = id => document.getElementById(id);
+const PHASES = [
+  [0, 'Claude giao task → Codex RUSH: bước 3/5 · sửa auth/refresh.ts', 'ドドドド'],
+  [4, '⏸ Codex chạm rate limit, reset sau 4h12m', ''],
+  [5.2, 'Codex ghi checkpoint 287 token: xong gì, sửa file nào, bước tiếp theo', ''],
+  [7.2, 'Claude REWIND: đọc checkpoint 287 tok, không replay 41,903 tok transcript', '◀◀'],
+  [8.6, 'Claude làm tiếp từ bước 4/5, không làm lại từ đầu', 'ドドドド'],
+  [12.5, 'TASK DONE ✓', 'ドカーン'],
+  [13.6, 'Lần bàn giao này tiết kiệm 99.3% token', 'ゴゴゴゴ'],
+];
+let lastPhase = -1, lastSceneF = -1;
+const SPRITE_Y = 6, STAND_X = 60, BUG_X = 118, BUG_Y = GROUND - 28;
+
+function sceneFrame(now) {
+  const T = now % LOOP, f = Math.floor(T * 12);
+  if (f === lastSceneF) return;
+  lastSceneF = f;
+  const q = f / 12;
+  const ph = PHASES.reduce((acc, p, i) => (T >= p[0] ? i : acc), 0);
+  if (ph !== lastPhase) {
+    lastPhase = ph;
+    $('caption').textContent = PHASES[ph][1];
+    const sfx = $('sceneSfx'); sfx.textContent = PHASES[ph][2];
+    sfx.style.left = ph === 5 ? '60%' : '14%'; sfx.style.top = ph === 5 ? '30%' : '34%';
+    $('scene').className = 'scene-wrap' + (ph === 1 ? ' tstop' : ph === 2 ? ' tbc' : '');
+    $('bigtext').classList.toggle('on', ph === 1);
+    $('tbc').classList.toggle('on', ph === 2);
+  }
+  // numbers shown in the HUD
+  const progress = T < 4 ? 20 + T / 4 * 40 : T < 8.6 ? 60 : Math.min(100, 60 + (T - 8.6) / 3.9 * 40);
+  const qCodex = T < 4 ? 18 * (1 - T / 4) : 0, qClaude = T < 7.2 ? 64 : 63;
+  $('taskBar').style.width = progress + '%';
+  $('taskLabel').textContent = `BUG #142 · bước ${Math.min(5, 1 + Math.floor(progress / 20))}/5`;
+  $('qCodex').style.width = qCodex + '%'; $('qCodexN').textContent = Math.round(qCodex) + '%';
+  $('qClaude').style.width = qClaude + '%'; $('qClaudeN').textContent = qClaude + '%';
+
+  sc.putImageData(bg, 0, 0);
+  const rushing = (T < 4) || (T >= 8.6 && T < 12.5);
+  // bug (the task)
+  if (T < 12.5) {
+    const hit = rushing && f % 3 === 0;
+    sc.filter = hit ? 'brightness(2.6)' : 'none';
+    sc.drawImage(bugOff, BUG_X + (hit ? 1 : 0), BUG_Y, 32, 28);
+    sc.filter = 'none';
+  } else if (T < 13.6) {
+    const r = rng(42), tt = T - 12.5;
+    for (let i = 0; i < 26; i++) {
+      const a = r() * Math.PI * 2, v = 20 + r() * 50;
+      sc.fillStyle = ['#c23a3a', '#ff7a6b', '#ffe14f', '#5a1420'][i % 4];
+      sc.fillRect(Math.round(BUG_X + 16 + Math.cos(a) * v * tt), Math.round(BUG_Y + 14 + Math.sin(a) * v * tt + 60 * tt * tt), 2, 2);
+    }
+  }
+  // Codex
+  if (T < 8.6) {
+    const move = T < 5.2 ? 'rush' : 'ko';
+    drawStand(offCodex, STANDS.codex, move, T < 4 ? q : 3.92);
+    shadow(sc, STAND_X + 32, GROUND - 1, 12);
+    sc.globalAlpha = T < 7.2 ? 1 : 1 - (T - 7.2) / 1.4;
+    sc.filter = move === 'ko' ? 'grayscale(1) brightness(.7)' : 'none';
+    sc.drawImage(offCodex.canvas, STAND_X, SPRITE_Y);
+    sc.globalAlpha = 1; sc.filter = 'none';
+  }
+  // Claude
+  if (T >= 7.2) {
+    const move = T < 8.6 ? 'idle' : T < 12.5 ? 'rush' : T < 13.6 ? 'idle' : 'pose';
+    const k = Math.min(1, (T - 7.2) / 1.2), x = Math.round(-64 + (STAND_X + 64) * (1 - (1 - k) ** 3));
+    drawStand(offClaude, STANDS.claude, move, q);
+    shadow(sc, x + 32, GROUND - 1, 12);
+    if (T < 8.6) {
+      sc.filter = 'hue-rotate(160deg) saturate(1.6)';
+      for (let g = 3; g >= 1; g--) { sc.globalAlpha = .12 * (4 - g); sc.drawImage(offClaude.canvas, x - g * 9, SPRITE_Y); }
+      sc.globalAlpha = 1; sc.filter = 'none';
+    }
+    sc.drawImage(offClaude.canvas, x, SPRITE_Y);
+  }
+  if (rushing) speedLines(sc, q, SW, SH - 10);
+}
+
+function loop(ms) {
+  const now = ms / 1000;
+  cards.forEach(c => drawCard(c, now));
+  sceneFrame(now);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
