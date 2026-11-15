@@ -23,6 +23,8 @@ export interface StandlinkApi {
   permission(reqId: string, optionId: string | null): Promise<void>;
   stop(projectId: string, memberId: AgentId): Promise<void>;
   pickFolder(): Promise<string | null>;
+  /** Providers from ~/.standlink/providers.json, if the user keeps one. */
+  configProviders(): Promise<{ id: string; name: string; cmd: string }[]>;
   onEvent(cb: (e: AcpEventMsg) => void): () => void;
   /** A team tool (board / assign / ask) called by an agent through the MCP bridge. */
   onMcpCall(cb: (c: McpCall) => void): () => void;

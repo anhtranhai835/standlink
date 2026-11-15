@@ -96,6 +96,10 @@ export default function App() {
     setMetas(ms => ms.map(m => (m.id === sid ? { ...m, cast: f(m.cast) } : m)));
 
   useEffect(() => store.set(PROVIDERS_KEY, providers), [providers]);
+  // Merge providers from ~/.standlink/providers.json (desktop app only); ones already in the list are kept as they are.
+  useEffect(() => {
+    bridge?.configProviders().then(extra => setProviders(ps => [...ps, ...extra.filter(e => !ps.some(p => p.id === e.id))]));
+  }, []);
   useEffect(() => {
     store.set(PROJECTS_KEY, metas.map(m => ({ ...m, team: worlds[m.id]?.team ?? [], orch: worlds[m.id]?.orch ?? '' })));
   }, [metas, worlds]);

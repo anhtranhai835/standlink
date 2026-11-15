@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('standlink', {
   permission: (reqId, optionId) => ipcRenderer.invoke('acp:permission', { reqId, optionId }),
   stop: (projectId, memberId) => ipcRenderer.invoke('acp:stop', { projectId, memberId }),
   pickFolder: () => ipcRenderer.invoke('dialog:folder'),
+  configProviders: () => ipcRenderer.invoke('config:providers'),
   onMcpCall: cb => {
     const handler = (_e, call) => cb(call);
     ipcRenderer.on('mcp:call', handler);

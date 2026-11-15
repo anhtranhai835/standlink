@@ -1,7 +1,9 @@
 // Electron main process: owns one ACP agent process per (project, member) and streams its events to the UI.
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { randomBytes } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { AcpAgent, AcpError, isRateLimit, type McpServerStdio, type PermissionOutcome } from './acp.ts';
 import { deleteSkill, listSkills, projectDir, readSkill, saveSkill } from './skills.ts';
@@ -168,6 +170,22 @@ ipcMain.handle('acp:stop', (_e, a: { projectId: string; memberId: string }) => {
   cancelPermissions(key);
   slots.get(key)?.agent.kill();
   slots.delete(key);
+});
+
+/**
+ * Optional user config: ~/.standlink/providers.json = [{ "id", "name", "cmd" }].
+ * Lets you keep your agent list in a file (and in dotfiles) instead of typing it in the UI.
+ * Nothing here is built in: a missing or broken file just means no extra providers.
+ */
+ipcMain.handle('config:providers', async () => {
+  try {
+    const raw = JSON.parse(await readFile(path.join(os.homedir(), '.standlink', 'providers.json'), 'utf8'));
+    return Array.isArray(raw)
+      ? raw.filter(p => p && typeof p.id === 'string' && typeof p.name === 'string' && typeof p.cmd === 'string')
+      : [];
+  } catch {
+    return [];
+  }
 });
 
 ipcMain.handle('dialog:folder', async () => {
