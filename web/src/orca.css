@@ -129,10 +129,10 @@ div.tab { padding: 0 4px 0 0; gap: 0; overflow: visible; }
 
 /* split panes: 2-4 columns, 2 rows on one screen */
 .panes { position: relative; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-rows: 100%; background: var(--line); }
-.pane { position: relative; display: grid; grid-template-rows: auto minmax(0, 1.3fr) minmax(0, 1fr) auto; min-height: 300px; min-width: 0; background: var(--bg); }
+.pane { position: relative; display: grid; grid-template-rows: auto var(--stage-h, 38%) 6px minmax(0, 1fr) auto; min-height: 300px; min-width: 0; background: var(--bg); }
 .pane.lead { box-shadow: inset 0 0 0 2px var(--gold); }
 
-.pane-head { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto auto auto; gap: 8px; align-items: center; padding: 6px 8px; background: var(--panel); }
+.pane-head { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto auto auto auto; gap: 8px; align-items: center; padding: 6px 8px; background: var(--panel); }
 .pane-head .face { width: 34px; height: 34px; }
 .ph-main { display: grid; min-width: 0; line-height: 1.2; }
 .ph-main b { display: flex; align-items: center; gap: 6px; font-size: 13px; }
@@ -190,6 +190,8 @@ div.tab { padding: 0 4px 0 0; gap: 0; overflow: visible; }
 .t-paused .foe .sprite { filter: grayscale(.6) brightness(.8); }
 .fight .t-body { position: absolute; top: 10px; right: 12px; width: min(46%, 380px); box-shadow: inset 0 0 0 3px var(--foe), 4px 4px 0 rgba(0,0,0,.5); }
 .fight .t-id { color: var(--foe); }
+.fight.t-done .t-body { animation: none; box-shadow: inset 0 0 0 3px var(--gold), 4px 4px 0 rgba(0,0,0,.5); }
+.fight.t-done .t-step::before { content: "✓ "; color: var(--gold); }
 @keyframes foe-hit { 0% { translate: 18px 0; filter: brightness(2.4) saturate(0); } 50% { translate: -6px 0; } 100% { translate: 0; filter: none; } }
 @keyframes ko { 30% { translate: 30px -24px; rotate: 0deg; } 100% { translate: 70px 40px; rotate: 22deg; opacity: .3; filter: grayscale(1); } }
 .clear { position: absolute; inset: 0; display: grid; place-items: center; font: 400 24px "Dela Gothic One", sans-serif; color: var(--gold); text-shadow: 3px 3px 0 var(--mag), 5px 5px 0 var(--black); transform: rotate(-8deg); animation: stamp .4s .3s both cubic-bezier(.2,1.6,.4,1); }
@@ -206,6 +208,22 @@ div.tab { padding: 0 4px 0 0; gap: 0; overflow: visible; }
 .f-note, .f-narr { color: var(--mute); font-style: italic; }
 .f-step { color: var(--mute); font-size: 12px; }
 .f-text { color: var(--ink); }
+.feed li { min-width: 0; overflow-wrap: anywhere; }
+.f-step { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.md { display: grid; gap: 4px; line-height: 1.55; }
+.md p, .md ul { margin: 0; }
+.md ul { padding-left: 18px; }
+.md .md-h { font-weight: 800; color: var(--c); }
+.md code { padding: 0 4px; font-size: 12px; color: var(--ink); background: #0f0819; }
+.md pre { margin: 0; padding: 8px 10px; overflow-x: auto; background: #0f0819; box-shadow: inset 0 0 0 1px #3a2560; }
+.md pre code { padding: 0; font-size: 12px; line-height: 1.5; white-space: pre; background: none; }
+/* drag bar between the JoJo stage and the transcript */
+.detail-btn { min-height: 28px; padding: 2px 10px; font-size: 12px; font-weight: 800; color: var(--mute); background: transparent; border: 2px solid #3a2560; white-space: nowrap; }
+.detail-btn:hover { color: var(--ink); border-color: var(--c); }
+.detail-btn.on { color: var(--black); background: var(--c); border-color: var(--c); }
+.f-doing { color: var(--mute); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stage-split { cursor: row-resize; background: var(--panel); touch-action: none; box-shadow: inset 0 1px 0 #3a2560, inset 0 -1px 0 #3a2560; }
+.stage-split:hover, .stage-split:focus-visible { background: var(--c); outline: none; }
 .f-card { padding: 6px 9px; background: var(--panel); box-shadow: inset 0 0 0 1px #3a2560; }
 .f-card p { margin: 0; }
 .f-card-head { font-size: 11px; font-weight: 800; color: var(--c); }

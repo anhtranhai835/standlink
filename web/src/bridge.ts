@@ -68,7 +68,7 @@ export function updateToEvents(agent: AgentId, u: AcpUpdate): Ev[] {
     case 'agent_message_chunk':
       return u.content?.type === 'text' && u.content.text ? [{ t: 'stream', agent, text: u.content.text }] : [];
     case 'tool_call':
-      return [{ t: 'activity', agent, label: u.title || u.kind || 'tool', file: u.locations?.[0]?.path }];
+      return [{ t: 'activity', agent, label: toolLabel(u.title || u.kind || 'tool'), file: u.locations?.[0]?.path }];
     case 'plan': {
       const e = u.entries ?? [];
       return [{ t: 'plan', agent, total: e.length, done: e.filter(x => x.status === 'completed').length }];
@@ -80,4 +80,13 @@ export function updateToEvents(agent: AgentId, u: AcpUpdate): Ev[] {
     default:
       return [];
   }
+}
+
+const TEAM_TOOL: Record<string, string> = { board: '📋 Xem đội', assign: '📌 Giao việc', ask: '💬 Nhắn đồng đội', spawn: '➕ Xin thêm người', skill: '✦ Đọc skill' };
+/** Raw tool ids ("mcp__standlink__board", "ToolSearch") as words people read. */
+export function toolLabel(title: string): string {
+  const m = /^mcp__(.+?)__(.+)$/.exec(title);
+  if (m) return m[1] === 'standlink' ? TEAM_TOOL[m[2]] ?? m[2] : `${m[2]} · ${m[1]}`;
+  if (title === 'ToolSearch') return '🔎 Tìm tool';
+  return title;
 }

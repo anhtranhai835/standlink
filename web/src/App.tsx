@@ -711,8 +711,10 @@ export default function App() {
           })}
           <div className="tab-tools">
             <span className="part">{w.part ? `PART ${w.part}` : 'PROLOGUE'}</span>
-            <button type="button" disabled={!busy} onClick={() => patchRun({ playing: !run?.playing })}>{run?.playing === false ? '▶ Tiếp' : '⏸ Dừng'}</button>
-            <button type="button" disabled={!run} onClick={() => patchRun({ speed: run?.speed === 1 ? 2 : run?.speed === 2 ? 0.5 : 1 })}>{run?.speed ?? 1}x</button>
+            {!bridge && <>
+              <button type="button" disabled={!busy} onClick={() => patchRun({ playing: !run?.playing })}>{run?.playing === false ? '▶ Tiếp' : '⏸ Dừng'}</button>
+              <button type="button" disabled={!run} onClick={() => patchRun({ speed: run?.speed === 1 ? 2 : run?.speed === 2 ? 0.5 : 1 })}>{run?.speed ?? 1}x</button>
+            </>}
             <button type="button" onClick={() => setCast(meta.id, () => castFor(w.team))}>🎲 Random</button>
           </div>
         </div>
