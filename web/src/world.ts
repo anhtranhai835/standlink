@@ -43,6 +43,7 @@ export interface Agent {
   auth?: AuthMethod[]; // set when the agent said it needs a login
   ctx?: number; // % of the context window used (from ACP usage_update)
   act?: { kind: 'special' | 'finisher'; key: number };
+  branch?: string; // git branch of this member's own worktree, when the project is a git repo
 }
 export interface Checkpoint { tokens: number; replay: number; notes: string[] }
 export interface Task {
@@ -83,7 +84,8 @@ export type Ev =
   | { t: 'turn.end'; agent: AgentId; stopReason: string }
   | { t: 'agent.error'; agent: AgentId; text: string }
   | { t: 'config'; agent: AgentId; options: ConfigOption[] }
-  | { t: 'auth'; agent: AgentId; text: string; methods: AuthMethod[] };
+  | { t: 'auth'; agent: AgentId; text: string; methods: AuthMethod[] }
+  | { t: 'workspace'; agent: AgentId; branch: string };
 export type Action = Ev
   | { t: 'perm.answer'; ok: boolean } | { t: 'land'; key: number }
   | { t: 'start'; mission: string } | { t: 'orch'; orch: AgentId }
@@ -206,6 +208,7 @@ export function reduce(w: World, a: Action): World {
     }
     case 'member.edit':
       return { ...w, team: w.team.map(m => (m.id === a.id ? { ...m, label: a.label.trim() || m.label, role: a.role.trim() || undefined, named: !!a.label.trim() || m.named } : m)) };
+    case 'workspace': return w.agents[a.agent] ? { ...w, agents: patch(w.agents, a.agent, { branch: a.branch }) } : w;
     case 'config': return w.agents[a.agent] ? { ...w, agents: patch(w.agents, a.agent, { config: a.options }) } : w;
     case 'quiet': return { ...w, fx: null, flights: [] }; // drop effects that piled up while the session ran in the background
     case 'member.add':

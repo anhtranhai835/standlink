@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('standlink', {
   permission: (reqId, optionId) => ipcRenderer.invoke('acp:permission', { reqId, optionId }),
   stop: (projectId, memberId) => ipcRenderer.invoke('acp:stop', { projectId, memberId }),
   pickFolder: () => ipcRenderer.invoke('dialog:folder'),
+  canIsolate: dir => ipcRenderer.invoke('git:can-isolate', dir),
   claimProject: projectId => ipcRenderer.invoke('window:claim', projectId),
   openProject: projectId => ipcRenderer.invoke('window:open', projectId),
   closeProject: projectId => ipcRenderer.invoke('window:close', projectId),
