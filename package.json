@@ -5,6 +5,7 @@
   "scripts": {
     "setup": "npm --prefix web install",
     "app:dev": "npm --prefix web run app:dev",
-    "app": "npm --prefix web run app"
+    "app": "npm --prefix web run app",
+    "installer": "npm --prefix web run installer"
   }
 }

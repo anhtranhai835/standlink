@@ -36,8 +36,11 @@ const bridgeServer = createServer((req, res) => {
     }
     const callId = `mcp-${++callSeq}`;
     const timer = setTimeout(() => { mcpCalls.delete(callId); reply(504, { text: 'Standlink không phản hồi kịp.', isError: true }); }, 30_000);
+    const w = winOf(call.projectId);
+    if (!w) { clearTimeout(timer); return reply(409, { text: 'Cửa sổ project đã đóng.', isError: true }); }
     mcpCalls.set(callId, r => { clearTimeout(timer); reply(200, r); });
-    win?.webContents.send('mcp:call', { callId, ...call });
+    if (call.tool === 'spawn') w.flashFrame(true); // the leader wants a new member: the user has to approve it
+    w.webContents.send('mcp:call', { callId, ...call });
   });
 });
 
@@ -68,11 +71,17 @@ interface PromptArgs extends StartArgs { text: string }
 
 const slots = new Map<string, Slot>();
 const permissions = new Map<string, { key: string; resolve: (o: PermissionOutcome) => void }>();
-let win: BrowserWindow | null = null;
+/** One window per project, like VS Code's one window per folder. Agent events go only to their project's window. */
+const projectWins = new Map<string, BrowserWindow>();
 let permSeq = 0;
 
+const winOf = (projectId: string) => {
+  const w = projectWins.get(projectId);
+  return w && !w.isDestroyed() ? w : undefined;
+};
+// Agents can exit after their window is gone (closing kills them): sending to a destroyed window throws, so look it up each time.
 const emit = (projectId: string, memberId: string, msg: object) =>
-  win?.webContents.send('acp:event', { projectId, memberId, msg });
+  winOf(projectId)?.webContents.send('acp:event', { projectId, memberId, msg });
 
 const errText = (err: unknown) =>
   err instanceof AcpError ? `${err.message}${err.data ? ` · ${String(typeof err.data === 'string' ? err.data : JSON.stringify(err.data)).slice(-600)}` : ''}` : String(err);
@@ -206,20 +215,48 @@ ipcMain.handle('config:providers', async () => {
   }
 });
 
-ipcMain.handle('dialog:folder', async () => {
-  const r = await dialog.showOpenDialog(win!, { properties: ['openDirectory'] });
+ipcMain.handle('dialog:folder', async e => {
+  const w = BrowserWindow.fromWebContents(e.sender);
+  const r = w ? await dialog.showOpenDialog(w, { properties: ['openDirectory'] }) : await dialog.showOpenDialog({ properties: ['openDirectory'] });
   return r.canceled ? null : r.filePaths[0];
 });
 
-function createWindow() {
-  win = new BrowserWindow({
+/** The page tells us which project it shows (a window opened without one picks the last used project). */
+ipcMain.handle('window:claim', (e, projectId: string) => {
+  const w = BrowserWindow.fromWebContents(e.sender);
+  if (w) projectWins.set(projectId, w);
+});
+/** Focus the project's window, or open a new one for it. */
+ipcMain.handle('window:open', (_e, projectId: string) => {
+  const w = winOf(projectId);
+  if (w) { if (w.isMinimized()) w.restore(); w.focus(); } else createWindow(projectId);
+});
+ipcMain.handle('window:close', (_e, projectId: string) => winOf(projectId)?.close());
+
+function stopProject(projectId: string) {
+  for (const [key, slot] of slots) if (key.startsWith(`${projectId}/`)) { cancelPermissions(key); slot.agent.kill(); slots.delete(key); }
+}
+
+function createWindow(projectId?: string) {
+  const w = new BrowserWindow({
     width: 1440, height: 900, minWidth: 960, minHeight: 640,
     title: 'Standlink', backgroundColor: '#0b0612', autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true },
   });
-  if (process.argv.includes('--dev')) win.loadURL('http://localhost:5173');
-  else win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  w.on('closed', () => {
+    for (const [pid, pw] of projectWins) if (pw === w) { projectWins.delete(pid); stopProject(pid); }
+  });
+  const query = projectId ? { project: projectId } : undefined;
+  if (process.argv.includes('--dev')) w.loadURL(`http://localhost:5173/${projectId ? `?project=${encodeURIComponent(projectId)}` : ''}`);
+  else w.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), { query });
 }
+
+// One app instance: launching Standlink again (desktop shortcut) focuses the open window instead of a second copy.
+if (!app.requestSingleInstanceLock()) app.quit();
+app.on('second-instance', () => {
+  const w = BrowserWindow.getAllWindows()[0];
+  if (w) { if (w.isMinimized()) w.restore(); w.focus(); }
+});
 
 app.whenReady().then(() => {
   // localhost only, random port, token-checked: other machines and other local apps cannot drive the team

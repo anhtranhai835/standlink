@@ -26,6 +26,11 @@ export interface StandlinkApi {
   permission(reqId: string, optionId: string | null): Promise<void>;
   stop(projectId: string, memberId: AgentId): Promise<void>;
   pickFolder(): Promise<string | null>;
+  /** Tell the app this window shows that project (its agents' events come here). */
+  claimProject(projectId: string): Promise<void>;
+  /** Focus the project's window, or open one: one window per project. */
+  openProject(projectId: string): Promise<void>;
+  closeProject(projectId: string): Promise<void>;
   /** Providers from ~/.standlink/providers.json, if the user keeps one. */
   configProviders(): Promise<{ id: string; name: string; cmd: string }[]>;
   onEvent(cb: (e: AcpEventMsg) => void): () => void;

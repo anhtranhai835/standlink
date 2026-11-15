@@ -1,4 +1,4 @@
-// JoJo cast. Sprites live in public/sprites/<id>/<row>-NN.png (local only, gitignored).
+// JoJo cast. Sprites live in public/sprites/<id>/<row>-NN.webp (local only, gitignored; made by scripts/slice_sprites.py).
 // Each sheet row: idle, then three abilities. work = row played while doing a task,
 // special = row played when talking or taking over a task, finisher = row played on task done.
 export type Row = 'idle' | 'skill1' | 'skill2' | 'skill3';
@@ -38,7 +38,7 @@ export const CHARACTERS: Character[] = [
 
 export const byId = (id: string) => CHARACTERS.find(ch => ch.id === id) ?? CHARACTERS[0];
 
-export const frameUrl = (id: string, row: Row, i: number) => `sprites/${id}/${row}-${String(i + 1).padStart(2, '0')}.png`;
+export const frameUrl = (id: string, row: Row, i: number) => `sprites/${id}/${row}-${String(i + 1).padStart(2, '0')}.webp`;
 
 export const SKILLS: Row[] = ['skill1', 'skill2', 'skill3'];
 const ALL_FRAMES = [0, 1, 2, 3, 4, 5, 6, 7];

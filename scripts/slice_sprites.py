@@ -1,18 +1,20 @@
 """Slice Gemini sprite sheets (8x4 grid on #FF00FF) into transparent PNG frames.
 
 Usage: python scripts/slice_sprites.py [src_dir] [out_dir]
-Output: out_dir/<character>/<row>-<nn>.png, rows = idle, skill1, skill2, skill3.
+Output: out_dir/<character>/<row>-<nn>.webp, rows = idle, skill1, skill2, skill3.
+Frames are upscaled 3x and sharpened: the sheets are ~120px per pose but the app shows one pose ~450px tall.
 """
 import json
 import sys
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 
 COLS, ROWS = 8, 4
 ROW_NAMES = ["idle", "skill1", "skill2", "skill3"]
 INSET = 3  # px trimmed inside each cell to drop the black grid lines
+SCALE = 3  # the app shows one Stand per screen, ~450px tall: upscale here so the browser never stretches a tiny frame
 FULL_BG = 0.9  # a frame this opaque is a painted background (e.g. a time-stop scene), not a pose
 
 
@@ -50,6 +52,15 @@ def key_magenta(rgb: np.ndarray) -> np.ndarray:
     return np.where(bg, 0, 255).astype(np.uint8)
 
 
+def upscale(cell: np.ndarray, alpha: np.ndarray) -> Image.Image:
+    """Lanczos upscale + unsharp mask for crisp edges; alpha stays hard-edged (nearest) so no halo appears."""
+    h, w = alpha.shape
+    size = (w * SCALE, h * SCALE)
+    rgb = Image.fromarray(cell).resize(size, Image.LANCZOS).filter(ImageFilter.UnsharpMask(radius=SCALE * 0.7, percent=130, threshold=2))
+    rgb.putalpha(Image.fromarray(alpha).resize(size, Image.NEAREST))
+    return rgb
+
+
 def slice_sheet(path: Path, out_dir: Path) -> dict[str, list[int]]:
     img = np.array(Image.open(path).convert("RGB"))
     dark = img.sum(axis=2) < 120
@@ -63,7 +74,7 @@ def slice_sheet(path: Path, out_dir: Path) -> dict[str, list[int]]:
         for ci in range(COLS):
             cell = img[ys[ri] + INSET: ys[ri + 1] - INSET, xs[ci] + INSET: xs[ci + 1] - INSET]
             alpha = key_magenta(cell)
-            Image.fromarray(np.dstack([cell, alpha]), "RGBA").save(dest / f"{ROW_NAMES[ri]}-{ci + 1:02d}.png")
+            upscale(cell, alpha).save(dest / f"{ROW_NAMES[ri]}-{ci + 1:02d}.webp", quality=90, method=6)
             if (alpha > 0).mean() < FULL_BG:
                 keep.append(ci)
         playable[ROW_NAMES[ri]] = keep or list(range(COLS))  # never leave a row empty
@@ -78,6 +89,7 @@ def _self_check() -> None:
     assert grid_lines(sheet.sum(axis=2) < 120, 0, 2) == [0, 20, 41]
     assert key_magenta(sheet[:, :19]).max() == 0
     assert key_magenta(np.full((3, 3, 3), 90, np.uint8)).min() == 255  # gray stays opaque
+    assert upscale(np.zeros((4, 5, 3), np.uint8), np.full((4, 5), 255, np.uint8)).size == (5 * SCALE, 4 * SCALE)
 
 
 if __name__ == "__main__":

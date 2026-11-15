@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type Ref } from 'react';
-import { SKILLS, frameUrl, framesOf, type Character, type Row } from './characters';
+import { CHARACTERS, SKILLS, frameUrl, framesOf, type Character, type Row } from './characters';
 import { MAX_TEAM, type Access, type Agent, type ConfigOption, type AgentId, type Flight, type Fx, type LogItem, type Member, type Provider, type Task } from './world';
 
 const FRAME_MS = 170; // ~6fps: slow enough to read each move
@@ -112,7 +112,7 @@ export function Pane({ member, agent, task, char, isOrch, log, nameOf, access, b
             onEnd={() => (show ? setShow(null) : setRound(r => r + 1))} />
         </div>
         {cry && <span className="cry" aria-hidden="true">{cry}</span>}
-        <Target task={task} agent={agent} />
+        <Target task={task} agent={agent} me={char} />
         {agent.state === 'limited' && <div className="stamp">TIME STOP<small>reset sau {agent.resetIn}</small></div>}
         {agent.auth && !perm && (
           <div className="perm" role="alertdialog" aria-label="Agent cần đăng nhập">
@@ -146,13 +146,31 @@ export function Pane({ member, agent, task, char, isOrch, log, nameOf, access, b
   );
 }
 
-/** The task the Stand is attacking: steps are its HP. */
-function Target({ task, agent }: { task?: Task; agent: Agent }) {
+/** Same task, same opponent: a stable pick from the task id, never the agent's own character. */
+function foeFor(taskId: string, me: Character): Character {
+  const pool = CHARACTERS.filter(ch => ch.id !== me.id);
+  let h = 0;
+  for (const ch of taskId) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return pool[h % pool.length];
+}
+
+/**
+ * The task as an opponent JoJo facing the agent's Stand, fighting-game style:
+ * every finished step lands a hit, the HP bar is the steps left, a done task is a KO.
+ */
+function Target({ task, agent, me }: { task?: Task; agent: Agent; me: Character }) {
   if (!task) return <div className="target empty">CHỜ LỆNH</div>;
+  const foe = foeFor(task.id, me);
+  const down = task.status === 'done';
   return (
-    <div className={`target t-${task.status}`}>
+    <div className={`target fight t-${task.status}`} style={cssVars({ '--foe': foe.color })}>
+      <div className="foe" aria-hidden="true">
+        <div className="foe-in" key={task.hit}>
+          <Sprite key={foe.id} char={foe} row="idle" frozen={down || task.status === 'paused'} />
+        </div>
+      </div>
       <div className="t-body" key={task.hit}>
-        <p className="t-id">{task.id}</p>
+        <p className="t-id">{task.id} · VS 「{foe.stand}」</p>
         <p className="t-title">{task.title}</p>
         <div className="hp" aria-label={`Tiến độ ${task.done}/${task.total}`}>
           {Array.from({ length: task.total }, (_, i) => <i key={i} className={i < task.done ? 'gone' : ''} />)}
@@ -346,21 +364,75 @@ export function ProviderList({ providers, onAdd, onEdit, onRemove }: {
   );
 }
 
-/** New project: a name and the folder the agents will work in. */
-export function NewProject({ onCreate, onCancel, onPick }: {
-  onCreate: (name: string, path: string) => void; onCancel: () => void; onPick?: () => Promise<string | null>;
-}) {
-  const [name, setName] = useState('');
+/** Browser demo only (the desktop app uses the system folder picker): type a folder path; the project is named after it. */
+export function NewProject({ onOpen, onCancel }: { onOpen: (path: string) => void; onCancel: () => void }) {
   const [path, setPath] = useState('');
   return (
-    <form className="stack-form" onSubmit={e => { e.preventDefault(); if (name.trim()) onCreate(name.trim(), path.trim()); }}>
-      <input value={name} onChange={e => setName(e.target.value)} placeholder="Tên project" aria-label="Tên project" autoFocus />
-      <div className="row">
-        <input value={path} onChange={e => setPath(e.target.value)} placeholder="Thư mục (vd: D:\code\shop)" aria-label="Thư mục project" />
-        {onPick && <button type="button" onClick={async () => { const d = await onPick(); if (d) setPath(d); }}>📁</button>}
-      </div>
-      <div className="row"><button type="submit" disabled={!name.trim()}>Tạo</button><button type="button" onClick={onCancel}>Huỷ</button></div>
+    <form className="stack-form" onSubmit={e => { e.preventDefault(); if (path.trim()) onOpen(path.trim()); }}>
+      <label className="field">Thư mục<input value={path} onChange={e => setPath(e.target.value)} placeholder="vd: D:\code\shop" autoFocus /></label>
+      <div className="row"><button type="submit" disabled={!path.trim()}>Mở</button><button type="button" onClick={onCancel}>Huỷ</button></div>
     </form>
+  );
+}
+
+/**
+ * The leader asked for one more member (spawn). The member already runs so its real model / effort lists load here;
+ * the user picks them, or says no. Native <dialog>: focus stays inside, Esc = decline.
+ */
+export function SpawnDialog({ leader, member, agent, char, providers, needsFolder, onProvider, onConfig, onAnswer }: {
+  leader: string; member: Member; agent: Agent; char: Character; providers: Provider[]; needsFolder: boolean;
+  onProvider: (providerId: string) => void; onConfig: (configId: string, value: string) => void;
+  onAnswer: (ok: boolean, label?: string, role?: string) => void;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const [label, setLabel] = useState(member.label);
+  const [role, setRole] = useState(member.role ?? '');
+  useEffect(() => { ref.current?.showModal(); }, []);
+  useEffect(() => setLabel(member.label), [member.provider]); // a new provider renames an unnamed member
+  const loading = !agent.config && !needsFolder;
+  return (
+    <dialog ref={ref} className="spawn" aria-labelledby="spawn-title" style={cssVars({ '--c': char.color })}
+      onCancel={e => { e.preventDefault(); onAnswer(false); }}>
+      <form method="dialog" onSubmit={e => { e.preventDefault(); onAnswer(true, label, role); }}>
+        <header className="spawn-head">
+          <img className="face" src={frameUrl(char.id, 'idle', 0)} alt="" />
+          <div>
+            <p className="spawn-kicker">👑 {leader} cần thêm người</p>
+            <h2 id="spawn-title">Thêm 「{char.stand}」 vào đội?</h2>
+          </div>
+        </header>
+        <div className="spawn-grid">
+          <label className="field">Tên<input value={label} onChange={e => setLabel(e.target.value.slice(0, 40))} /></label>
+          <label className="field">Vai trò<input value={role} onChange={e => setRole(e.target.value.slice(0, 40))} list="role-presets" placeholder="vd: Reviewer" /></label>
+          <datalist id="role-presets">{ROLE_PRESETS.map(r => <option key={r} value={r} />)}</datalist>
+          <label className="field">Provider
+            <select value={member.provider} onChange={e => onProvider(e.target.value)}>
+              {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </label>
+          {PICKERS.map(pk => {
+            const opt = agent.config?.find(o => o.category === pk.category);
+            const choices = opt ? flatOptions(opt) : [];
+            return (
+              <label key={pk.category} className="field">{pk.label}
+                <select value={opt?.currentValue ?? ''} disabled={choices.length < 2} onChange={e => opt && onConfig(opt.id, e.target.value)}>
+                  {choices.length ? choices.map(c => <option key={c.value} value={c.value}>{c.name}</option>)
+                    : <option value="">{loading ? 'Đang tải…' : 'Mặc định của agent'}</option>}
+                </select>
+              </label>
+            );
+          })}
+        </div>
+        <p className="spawn-note" aria-live="polite">
+          {needsFolder ? 'Project chưa có thư mục: agent chỉ chạy được sau khi mở thư mục.'
+            : loading ? 'Đang khởi động agent để lấy danh sách model…' : 'Có thể đổi model / effort sau ở ô chat của agent.'}
+        </p>
+        <div className="spawn-btns">
+          <button type="button" className="ghost" onClick={() => onAnswer(false)}>Từ chối</button>
+          <button type="submit" className="cta" autoFocus>Thêm vào đội</button>
+        </div>
+      </form>
+    </dialog>
   );
 }
 
