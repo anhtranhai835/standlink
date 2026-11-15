@@ -71,7 +71,7 @@ code { font: 600 11px ui-monospace, Consolas, monospace; color: var(--mute); ove
 .ag-main:hover b { text-decoration: underline; text-underline-offset: 3px; }
 .ag-main b { font-size: 13px; color: var(--c); }
 .ag-main span { font-size: 11px; color: var(--mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.face { width: 38px; height: 38px; object-fit: cover; object-position: 50% 8%; border: 2px solid var(--c); background: var(--black); image-rendering: pixelated; flex: none; }
+.face { width: 38px; height: 38px; object-fit: cover; object-position: 50% 8%; border: 2px solid var(--c); background: var(--black); flex: none; }
 .face.sm { width: 30px; height: 30px; }
 .face.xs { width: 20px; height: 20px; border-width: 1px; }
 .crown { width: 28px; height: 28px; border: 2px solid var(--black); background: var(--black); filter: grayscale(1); opacity: .45; font-size: 13px; }
@@ -154,7 +154,7 @@ div.tab { padding: 0 4px 0 0; gap: 0; overflow: visible; }
 }
 .s-working .burst { animation: spin 22s linear infinite; transform-origin: 28% 70%; }
 .actor { position: absolute; left: 3%; bottom: 0; height: 94%; z-index: 1; }
-.sprite { display: block; height: 100%; width: auto; image-rendering: pixelated; filter: drop-shadow(4px 4px 0 rgba(0,0,0,.45)); }
+.sprite { display: block; height: 100%; width: auto; filter: drop-shadow(4px 4px 0 rgba(0,0,0,.45)); }
 .sprite-missing { height: 100%; width: 110px; display: grid; place-items: center; text-align: center; color: var(--c); font: 400 13px "Dela Gothic One", sans-serif; background: rgba(0,0,0,.3); }
 .cry {
   position: absolute; left: 40%; top: 8%; z-index: 2;
@@ -181,6 +181,17 @@ div.tab { padding: 0 4px 0 0; gap: 0; overflow: visible; }
 .t-cp { margin: 3px 0 0; font-weight: 800; font-size: 11px; color: var(--gold); }
 .t-paused .t-body { opacity: .8; }
 .t-done .t-body { animation: boom .7s forwards; }
+/* task = opponent JoJo on the right, mirrored to face the agent's Stand; HUD bar on top like a fighting game */
+.target.fight { inset: 0; width: auto; transform: none; pointer-events: none; }
+.foe { position: absolute; right: 4%; bottom: 0; height: 94%; transform: scaleX(-1); }
+.foe-in { height: 100%; }
+.s-working .foe-in { animation: foe-hit .4s steps(4); }
+.t-done .foe { animation: ko .9s .1s forwards cubic-bezier(.3, 0, .6, 1); }
+.t-paused .foe .sprite { filter: grayscale(.6) brightness(.8); }
+.fight .t-body { position: absolute; top: 10px; right: 12px; width: min(46%, 380px); box-shadow: inset 0 0 0 3px var(--foe), 4px 4px 0 rgba(0,0,0,.5); }
+.fight .t-id { color: var(--foe); }
+@keyframes foe-hit { 0% { translate: 18px 0; filter: brightness(2.4) saturate(0); } 50% { translate: -6px 0; } 100% { translate: 0; filter: none; } }
+@keyframes ko { 30% { translate: 30px -24px; rotate: 0deg; } 100% { translate: 70px 40px; rotate: 22deg; opacity: .3; filter: grayscale(1); } }
 .clear { position: absolute; inset: 0; display: grid; place-items: center; font: 400 24px "Dela Gothic One", sans-serif; color: var(--gold); text-shadow: 3px 3px 0 var(--mag), 5px 5px 0 var(--black); transform: rotate(-8deg); animation: stamp .4s .3s both cubic-bezier(.2,1.6,.4,1); }
 .perm { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 4; padding: 8px 10px; background: #f4ead3; color: var(--black); box-shadow: inset 0 0 0 3px var(--black), 5px 5px 0 #8f4bd6; }
 .perm .next { margin: 0; font-size: 11px; font-style: italic; color: #5b3a85; }
@@ -281,7 +292,7 @@ div.tab { padding: 0 4px 0 0; gap: 0; overflow: visible; }
   .flight { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .cry, .menace, .s-working .burst, .fx-handoff::before, .d-running, .d-waiting, .es-kana { animation: none; }
+  .cry, .menace, .s-working .burst, .fx-handoff::before, .d-running, .d-waiting, .es-kana, .s-working .foe-in { animation: none; }
   .flight { display: none; }
   .spawn[open] { animation: none; }
 }

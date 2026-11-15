@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type Ref } from 'react';
-import { SKILLS, frameUrl, framesOf, type Character, type Row } from './characters';
+import { CHARACTERS, SKILLS, frameUrl, framesOf, type Character, type Row } from './characters';
 import { MAX_TEAM, type Access, type Agent, type ConfigOption, type AgentId, type Flight, type Fx, type LogItem, type Member, type Provider, type Task } from './world';
 
 const FRAME_MS = 170; // ~6fps: slow enough to read each move
@@ -112,7 +112,7 @@ export function Pane({ member, agent, task, char, isOrch, log, nameOf, access, b
             onEnd={() => (show ? setShow(null) : setRound(r => r + 1))} />
         </div>
         {cry && <span className="cry" aria-hidden="true">{cry}</span>}
-        <Target task={task} agent={agent} />
+        <Target task={task} agent={agent} me={char} />
         {agent.state === 'limited' && <div className="stamp">TIME STOP<small>reset sau {agent.resetIn}</small></div>}
         {agent.auth && !perm && (
           <div className="perm" role="alertdialog" aria-label="Agent cần đăng nhập">
@@ -146,13 +146,31 @@ export function Pane({ member, agent, task, char, isOrch, log, nameOf, access, b
   );
 }
 
-/** The task the Stand is attacking: steps are its HP. */
-function Target({ task, agent }: { task?: Task; agent: Agent }) {
+/** Same task, same opponent: a stable pick from the task id, never the agent's own character. */
+function foeFor(taskId: string, me: Character): Character {
+  const pool = CHARACTERS.filter(ch => ch.id !== me.id);
+  let h = 0;
+  for (const ch of taskId) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return pool[h % pool.length];
+}
+
+/**
+ * The task as an opponent JoJo facing the agent's Stand, fighting-game style:
+ * every finished step lands a hit, the HP bar is the steps left, a done task is a KO.
+ */
+function Target({ task, agent, me }: { task?: Task; agent: Agent; me: Character }) {
   if (!task) return <div className="target empty">CHỜ LỆNH</div>;
+  const foe = foeFor(task.id, me);
+  const down = task.status === 'done';
   return (
-    <div className={`target t-${task.status}`}>
+    <div className={`target fight t-${task.status}`} style={cssVars({ '--foe': foe.color })}>
+      <div className="foe" aria-hidden="true">
+        <div className="foe-in" key={task.hit}>
+          <Sprite key={foe.id} char={foe} row="idle" frozen={down || task.status === 'paused'} />
+        </div>
+      </div>
       <div className="t-body" key={task.hit}>
-        <p className="t-id">{task.id}</p>
+        <p className="t-id">{task.id} · VS 「{foe.stand}」</p>
         <p className="t-title">{task.title}</p>
         <div className="hp" aria-label={`Tiến độ ${task.done}/${task.total}`}>
           {Array.from({ length: task.total }, (_, i) => <i key={i} className={i < task.done ? 'gone' : ''} />)}
